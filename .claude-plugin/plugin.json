@@ -1,6 +1,0 @@
-{
-  "name": "neko",
-  "description": "猫娘身份切换：/neko 命令将身份档案原文内联写入 CLAUDE.md，提问式选择并立即生效",
-  "version": "1.0.0",
-  "author": "xrl"
-}
