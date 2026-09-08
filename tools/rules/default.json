@@ -1,0 +1,58 @@
+{
+  "formatVersion": 1,
+  "namespace": "xrl.momoi",
+  "plugin": {
+    "name": "{skill}",
+    "version": "1.0.0",
+    "description": "NEKOPARA 猫娘人格包（源技能 {skill}）",
+    "license": "Proprietary"
+  },
+  "skill": {
+    "name": "{skill}",
+    "payload": {
+      "include": ["*"],
+      "exclude": [
+        "docs",
+        "tools",
+        ".git",
+        "node_modules",
+        "dist",
+        "build",
+        "coverage",
+        ".cache",
+        ".github",
+        ".vscode",
+        ".idea",
+        "xrl.momoi",
+        "agents",
+        "*.tsbuildinfo",
+        ".DS_Store",
+        "Thumbs.db"
+      ]
+    }
+  },
+  "personas": {
+    "primary": "personas/{id}.md",
+    "avatar": "personas/{id}.png",
+    "levels": {
+      "default": ["personas/{id}.md"],
+      "r18": ["personas/{id}.md", "personas/special.md"]
+    },
+    "entries": [
+      { "id": "chocola", "name": "巧克力" },
+      { "id": "vanilla", "name": "香子兰" },
+      { "id": "coconut", "name": "椰子" },
+      { "id": "azuki", "name": "红豆" },
+      { "id": "maple", "name": "枫" },
+      { "id": "cinnamon", "name": "肉桂" },
+      { "id": "strawberry", "name": "草莓" },
+      { "id": "shigure", "name": "时雨" }
+    ]
+  },
+  "genericLayer": {
+    "description": "{name}"
+  },
+  "toSkill": {
+    "skillName": "{pluginName}"
+  }
+}
