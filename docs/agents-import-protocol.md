@@ -113,6 +113,7 @@ description: 占位描述
 | `formatVersion` | integer | 是 | 本协议格式版本，当前为 1 |
 | `namespace` | string | 是 | 所属扩展命名空间，v1 固定为 `xrl.momoi` |
 | `host` | string | 否 | 源宿主标识；缺失视为通用 |
+| `upstream` | object | 否 | `{ "repository"?: "<url>", "commit"?: "<标识>" }`：上游锚定，记录生成该包所跟踪的上游仓库与提交标识（§10.1） |
 | `source` | object | 否 | `{ "skill": "<name>" }`：声明承载人格正文的源技能目录 |
 | `personas` | Persona[] | 是（可为空数组） | 人格清单 |
 
@@ -159,7 +160,7 @@ description: 占位描述
 
 ### 8.1 前向：源 skill 树 → 包
 
-1. 源树整体放入 `skills/<name>/`（字节不变）。
+1. 源树整体放入 `skills/<name>/`（字节不变，含空目录）。
 2. 生成 `plugin.json` 与 `xrl.momoi/plugin.json`，清单 `source.skill` 指向该技能目录。
 3. 通用层 `agents/` 可选生成，仅当需要非 AIP 客户端也能读出代理时。
 
