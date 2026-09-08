@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AipError, errorFinding, hasErrors, type Finding } from './errors.js';
-import { readTree } from './fsutil.js';
-import { parseFrontmatter, splitFrontmatter } from './frontmatter.js';
+import { readTree, walkEmptyDirs } from './fsutil.js';
+import { frontmatterBodyBytes, parseFrontmatter } from './frontmatter.js';
 import {
   asFinding,
   isPlainObject,
@@ -117,7 +117,7 @@ function validateRoot(root: string, findings: Finding[], options: ValidateOption
     } catch {
       continue; // primary 缺失已由清单校验报告
     }
-    if (!Buffer.from(entry.body, 'utf8').equals(primaryBytes)) {
+    if (!entry.bodyBytes.equals(primaryBytes)) {
       findings.push(errorFinding('DUAL_FORM_MISMATCH', `通用层 agents/${persona.id}.md 的正文与扩展清单 primary 不一致（协议 §6.3）`, `agents/${persona.id}.md`));
     }
   }
@@ -143,7 +143,8 @@ interface GenericEntry {
   id: string;
   name: string;
   file: string;
-  body: string;
+  /** frontmatter 之后的正文原始字节（非 UTF-8 内容按字节比较，避免 U+FFFD 误判）。 */
+  bodyBytes: Buffer;
 }
 
 function collectGenericLayer(root: string, findings: Finding[]): Map<string, GenericEntry> {
@@ -167,8 +168,8 @@ function collectGenericLayer(root: string, findings: Finding[]): Map<string, Gen
       findings.push(errorFinding('ID_INVALID', `通用层文件名必须匹配 [a-z0-9-]+：${entry.name}`, `agents/${entry.name}`));
       continue;
     }
-    const parsed = parseFrontmatter(fs.readFileSync(path.join(agentsDir, entry.name), 'utf8'));
-    const declared = parsed.data['name'];
+    const raw = fs.readFileSync(path.join(agentsDir, entry.name));
+    const declared = parseFrontmatter(raw.toString('utf8')).data['name'];
     if (declared === undefined || declared.trim() === '') {
       findings.push(errorFinding('GENERIC_NAME_MISSING', '通用层文件缺少 frontmatter name（协议 §5）', `agents/${entry.name}`));
     }
@@ -176,7 +177,7 @@ function collectGenericLayer(root: string, findings: Finding[]): Map<string, Gen
       findings.push(errorFinding('ID_DUPLICATE', `通用层 id 重复：${id}`, `agents/${entry.name}`));
       continue;
     }
-    result.set(id, { id, name: declared ?? '', file: `agents/${entry.name}`, body: parsed.body });
+    result.set(id, { id, name: declared ?? '', file: `agents/${entry.name}`, bodyBytes: frontmatterBodyBytes(raw) });
   }
   return result;
 }
@@ -204,6 +205,9 @@ function roundTripFindings(
     skill: { ...rules.skill, payload: { include: ['*'], exclude: [] } },
     personas: { primary: rules.personas.primary, avatar: rules.personas.avatar },
   };
+
+  // 纯扩展包可以声明空的 personas[]（协议 §6.1）：无可还原内容，往返门无判定对象，直接跳过。
+  if (sourceSkill === undefined && personas.length === 0) return findings;
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'aip-roundtrip-'));
   try {
@@ -239,6 +243,19 @@ function roundTripFindings(
           findings.push(errorFinding('ROUNDTRIP_EXTRA', `往返重建后多出文件：${relative}`, `skills/${first.skillName}/${relative}`));
         }
       }
+      // 空目录没有文件承载，必须单独比较，否则往返丢空目录不会被发现（协议 §8.3）。
+      const originalDirs = new Set(walkEmptyDirs(originalDir, originalDir));
+      const producedDirs = new Set(walkEmptyDirs(producedDir, producedDir));
+      for (const relative of originalDirs) {
+        if (!producedDirs.has(relative)) {
+          findings.push(errorFinding('ROUNDTRIP_MISSING', `往返重建后缺少空目录：${relative}`, `skills/${sourceSkill}/${relative}`));
+        }
+      }
+      for (const relative of producedDirs) {
+        if (!originalDirs.has(relative)) {
+          findings.push(errorFinding('ROUNDTRIP_EXTRA', `往返重建后多出空目录：${relative}`, `skills/${first.skillName}/${relative}`));
+        }
+      }
       return findings;
     }
 
@@ -258,10 +275,10 @@ function roundTripFindings(
         findings.push(errorFinding('ROUNDTRIP_MISSING', `往返重建后缺少人格：${persona.id}`, persona.primary));
         continue;
       }
-      // to-skill 生成 personas/<id>.md 时补写显示名 frontmatter，正文按 frontmatter 之后的字节比对。
-      const expectedBody = Buffer.from(splitFrontmatter(originalBytes.toString('utf8')).body, 'utf8');
+      // to-skill 生成 personas/<id>.md 时补写显示名 frontmatter，正文按 frontmatter 之后的原始字节比对。
+      const expectedBody = frontmatterBodyBytes(originalBytes);
       const rebuiltBytes = fs.readFileSync(resolveInside(rebuilt, match['primary'], 'personas[].primary'));
-      const rebuiltBody = Buffer.from(splitFrontmatter(rebuiltBytes.toString('utf8')).body, 'utf8');
+      const rebuiltBody = frontmatterBodyBytes(rebuiltBytes);
       if (!rebuiltBody.equals(expectedBody)) {
         findings.push(errorFinding('ROUNDTRIP_MISMATCH', `人格 ${persona.id} 往返后正文字节不一致`, persona.primary));
       }

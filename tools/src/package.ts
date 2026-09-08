@@ -36,12 +36,18 @@ export function materializePackage(input: string, options: MaterializeOptions = 
     throw new AipError('INPUT_INVALID', `输入既不是目录也不是文件：${absolute}`, absolute);
   }
 
-  const { files, findings } = readZip(absolute, options.zipLimits);
+  const { files, dirs, findings } = readZip(absolute, options.zipLimits);
   if (hasErrors(findings) && options.strict !== false) {
     throw new AipError('ZIP_UNSAFE', 'zip 含不安全条目，拒绝解包（协议 §12）', absolute);
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aip-unzip-'));
-  extractZip(files, tempRoot);
+  try {
+    extractZip(files, tempRoot, dirs);
+  } catch (err) {
+    // 解包失败时 cleanup 回调尚未返回，必须在此回收临时目录，否则每次失败都泄漏一份解压产物。
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    throw err;
+  }
   const root = resolveWrapper(tempRoot, findings);
   return {
     root,

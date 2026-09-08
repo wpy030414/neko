@@ -138,6 +138,11 @@ describe('validate：协议 §10.1 验证门', () => {
       'skills/demo/docs/guide.md': '技能自带文档。\n',
       'skills/demo/tools/helper.js': '技能自带工具。\n',
       'skills/demo/dist/artifact.js': '构建产物混入载荷。\n',
+      'skills/demo/node_modules/dep/index.js': '第三方包自带依赖。\n',
+      'skills/demo/coverage/lcov.info': 'TN:\n',
+      'skills/demo/.git/config': '[core]\n',
+      'skills/demo/agents/legacy.md': '包内技能自带的 agents 目录。\n',
+      'skills/demo/xrl.momoi/note.json': '{}\n',
       'skills/demo/cache.tsbuildinfo': '{}\n',
     });
     const result = validatePackage(pkg);
@@ -165,6 +170,104 @@ describe('validate：协议 §10.1 验证门', () => {
     const restoredResult = toSkill(pkg, restored, {});
     expect(restoredResult.skillName).toBe('demo-personas');
     expect(fs.readFileSync(path.join(restored, 'personas', 'alpha.md'), 'utf8')).toBe('---\nname: 阿尔法\n---\n正文\n');
+  });
+
+  it('扩展清单顶层未知字段与 model 只告警，orchestration 报错（协议 §2.4/§2.5）', () => {
+    const root = tempDir();
+    const warned = writePackage(
+      root,
+      pluginDoc(),
+      baseManifest({ customField: 1, model: 'gpt-x' }),
+      BASE_FILES,
+    );
+    const warnResult = validatePackage(warned, { skipRoundTrip: true });
+    expect(warnResult.findings.map((finding) => finding.code)).toContain('UNKNOWN_MANIFEST_FIELD');
+    expect(warnResult.findings.map((finding) => finding.code)).toContain('MODEL_IGNORED');
+    expect(warnResult.findings.every((finding) => finding.severity === 'warning')).toBe(true);
+    expect(warnResult.ok).toBe(true);
+
+    const forbidden = writePackage(root, pluginDoc(), baseManifest({ orchestration: { order: [] } }), BASE_FILES);
+    const forbiddenResult = validatePackage(forbidden, { skipRoundTrip: true });
+    expect(forbiddenResult.findings.map((finding) => finding.code)).toContain('ORCHESTRATION_FORBIDDEN');
+    expect(forbiddenResult.ok).toBe(false);
+  });
+
+  it.each([
+    ['缺 formatVersion', { manifest: './xrl.momoi/plugin.json' }],
+    ['缺 manifest', { formatVersion: 1 }],
+    ['manifest 无 ./ 前缀', { formatVersion: 1, manifest: 'xrl.momoi/plugin.json' }],
+  ])('plugin.json 的扩展声明不完整时拒绝：%s（协议 §4.1）', (_label, declaration) => {
+    const root = tempDir();
+    const pkg = writePackage(root, pluginDoc({ extensions: { 'xrl.momoi': declaration } }), baseManifest(), BASE_FILES);
+    expect(check(pkg).codes).toContain('EXTENSION_DECL_INVALID');
+  });
+
+  it('sourceFile 文件基名与 id 不一致时告警（协议 §6.2）', () => {
+    const root = tempDir();
+    const manifest = baseManifest({
+      personas: [{ id: 'alpha', name: '阿尔法', primary: 'skills/demo/personas/alpha.md', sourceFile: 'personas/beta.md' }],
+    });
+    const pkg = writePackage(root, pluginDoc(), manifest, BASE_FILES);
+    const result = validatePackage(pkg, { skipRoundTrip: true });
+    expect(result.findings.map((finding) => finding.code)).toContain('ID_SOURCEFILE_MISMATCH');
+    expect(result.findings.find((finding) => finding.code === 'ID_SOURCEFILE_MISMATCH')?.severity).toBe('warning');
+    expect(result.ok).toBe(true);
+  });
+
+  it('upstream 上游锚定字段合法时通过，形状错误时报错（协议 §10.1）', () => {
+    const root = tempDir();
+    const good = writePackage(
+      root,
+      pluginDoc(),
+      baseManifest({ upstream: { repository: 'https://example.com/up.git', commit: 'abc123' } }),
+      BASE_FILES,
+    );
+    const goodResult = validatePackage(good, { skipRoundTrip: true });
+    expect(goodResult.findings).toEqual([]);
+    expect(goodResult.ok).toBe(true);
+
+    const bad = writePackage(path.join(root, 'bad'), pluginDoc(), baseManifest({ upstream: { commit: 7 } }), BASE_FILES);
+    const badResult = validatePackage(bad, { skipRoundTrip: true });
+    expect(badResult.findings.map((finding) => finding.code)).toContain('MANIFEST_INVALID');
+    expect(badResult.ok).toBe(false);
+  });
+
+  it('纯扩展包 personas 为空数组合法（协议 §6.1），往返门无判定对象而跳过', () => {
+    const root = tempDir();
+    const pkg = writePackage(root, pluginDoc(), { formatVersion: 1, namespace: 'xrl.momoi', personas: [] }, {});
+    const result = validatePackage(pkg);
+    expect(result.findings).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('plugin.json 带 UTF-8 BOM 时仍可解析', () => {
+    const root = tempDir();
+    const pkg = path.join(root, 'pkg');
+    writeFileAt(pkg, 'plugin.json', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(pluginDoc()))]));
+    writeFileAt(pkg, 'xrl.momoi/plugin.json', `${JSON.stringify(baseManifest(), null, 2)}\n`);
+    for (const [relative, content] of Object.entries(BASE_FILES)) writeFileAt(pkg, relative, content);
+    const result = validatePackage(pkg, { skipRoundTrip: true });
+    expect(result.findings.map((finding) => finding.code)).not.toContain('JSON_INVALID');
+    expect(result.ok).toBe(true);
+  });
+
+  it('非 UTF-8 正文：--with-agents 产物不再误报 DUAL_FORM_MISMATCH（协议 §6.3）', () => {
+    const root = tempDir();
+    const src = path.join(root, 'src');
+    const invalid = Buffer.from([0xff, 0xfe, 0x41, 0x0a]);
+    writeFileAt(src, 'SKILL.md', '---\nname: demo\n---\n\n正文。\n');
+    writeFileAt(src, 'personas/alpha.md', invalid);
+    const rulesFile = writeRules(path.join(root, 'rules.json'), {
+      entries: [{ id: 'alpha', name: '阿尔法' }],
+      levels: null,
+    });
+    const pkg = path.join(root, 'pkg');
+    buildPackage({ dir: src, out: pkg, rulesFile, withAgents: true });
+
+    const result = validatePackage(pkg, { rulesFile });
+    expect(result.findings.filter((finding) => finding.severity === 'error')).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(path.join(pkg, 'agents', 'alpha.md')).subarray(-invalid.length)).toEqual(invalid);
   });
 
   it('扩展清单两种形式不一致时报 EXTENSION_AMBIGUOUS', () => {

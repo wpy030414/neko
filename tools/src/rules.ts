@@ -56,10 +56,17 @@ export interface PersonasRules {
   entries?: PersonaEntryRules[];
 }
 
+/** 上游锚定（协议 §10.1）：记录生成该包所跟踪的上游仓库与提交标识。 */
+export interface UpstreamRules {
+  repository?: string;
+  commit?: string;
+}
+
 export interface Rules {
   formatVersion: number;
   namespace: string;
   host?: string;
+  upstream?: UpstreamRules;
   plugin: PluginRules;
   skill: SkillRules;
   personas: PersonasRules;
@@ -83,7 +90,8 @@ export function loadRules(file?: string): LoadedRules {
   }
   let data: unknown;
   try {
-    data = JSON.parse(text);
+    // 与清单 JSON 一致地容忍 UTF-8 BOM
+    data = JSON.parse(text.replace(/^﻿/, ''));
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     throw new AipError('RULES_INVALID_JSON', `规则文件不是合法 JSON（${reason}）`, at);
@@ -91,7 +99,7 @@ export function loadRules(file?: string): LoadedRules {
   return parseRules(data, at);
 }
 
-const TOP_LEVEL_KEYS = ['formatVersion', 'namespace', 'host', 'plugin', 'skill', 'personas', 'genericLayer', 'toSkill'];
+const TOP_LEVEL_KEYS = ['formatVersion', 'namespace', 'host', 'upstream', 'plugin', 'skill', 'personas', 'genericLayer', 'toSkill'];
 const PLUGIN_KEYS = ['name', 'version', 'description', 'license', 'author', 'homepage', 'repository', 'keywords'];
 const SKILL_KEYS = ['name', 'payload'];
 const PAYLOAD_KEYS = ['include', 'exclude'];
@@ -205,6 +213,14 @@ export function parseRules(data: unknown, at: string): LoadedRules {
     personas,
   };
   if (root['host'] !== undefined) rules.host = requireString(root['host'], at, 'host');
+  if (root['upstream'] !== undefined) {
+    const upstreamRaw = requireObject(root['upstream'], at, 'upstream');
+    checkKeys(upstreamRaw, ['repository', 'commit'], at, 'upstream');
+    const upstream: UpstreamRules = {};
+    assignString(upstream, 'repository', upstreamRaw['repository'], at, 'upstream.repository');
+    assignString(upstream, 'commit', upstreamRaw['commit'], at, 'upstream.commit');
+    rules.upstream = upstream;
+  }
   if (root['genericLayer'] !== undefined) {
     const genericRaw = requireObject(root['genericLayer'], at, 'genericLayer');
     checkKeys(genericRaw, ['description'], at, 'genericLayer');

@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { zipSync, unzipSync } from 'fflate';
 import { AipError, errorFinding, warningFinding, type Finding } from './errors.js';
-import { isSafeRelativePath } from './paths.js';
-import { assertFile, walkFiles, writeFileAt } from './fsutil.js';
+import { isSafeRelativePath, resolveInside } from './paths.js';
+import { assertFile, walkEmptyDirs, walkFiles, writeFileAt } from './fsutil.js';
 
 export interface ZipLimits {
   /** 中央目录条目数上限（含目录条目）。 */
@@ -29,6 +29,8 @@ export const DEFAULT_ZIP_LIMITS: ZipLimits = {
 
 export interface ZipReadResult {
   files: Map<string, Uint8Array>;
+  /** 显式目录条目（空目录载体），POSIX 相对路径。 */
+  dirs: string[];
   findings: Finding[];
 }
 
@@ -45,6 +47,7 @@ export function readZip(file: string, limits: ZipLimits = DEFAULT_ZIP_LIMITS): Z
   assertFile(file, file);
   const raw = new Uint8Array(fs.readFileSync(file));
   const files = new Map<string, Uint8Array>();
+  const dirs: string[] = [];
   const findings: Finding[] = [];
   let entryCount = 0;
   let totalSize = 0;
@@ -65,7 +68,21 @@ export function readZip(file: string, limits: ZipLimits = DEFAULT_ZIP_LIMITS): Z
           return false;
         }
         const normalized = info.name.replace(/\\/g, '/');
-        if (normalized.endsWith('/')) return false; // 目录条目
+        if (normalized.endsWith('/')) {
+          // 目录条目：空目录的唯一载体，登记后由 extractZip 重建（协议 §8.3 往返判据）。
+          const dir = normalized.replace(/\/+$/, '');
+          if (dir === '') return false;
+          if (isJunkEntry(dir)) {
+            findings.push(warningFinding('ZIP_JUNK_IGNORED', `已忽略打包工具附加条目：${info.name}`, file));
+            return false;
+          }
+          if (!isSafeRelativePath(dir)) {
+            findings.push(errorFinding('ZIP_ENTRY_UNSAFE', `zip 目录条目名不安全（绝对路径/含 ../控制字符/反斜杠/ADS）：${info.name}`, file));
+            return false;
+          }
+          dirs.push(dir);
+          return false;
+        }
         if (isJunkEntry(normalized)) {
           findings.push(warningFinding('ZIP_JUNK_IGNORED', `已忽略打包工具附加条目：${info.name}`, file));
           return false;
@@ -108,12 +125,15 @@ export function readZip(file: string, limits: ZipLimits = DEFAULT_ZIP_LIMITS): Z
   for (const [name, bytes] of Object.entries(extracted)) {
     files.set(name.replace(/\\/g, '/'), bytes);
   }
-  return { files, findings };
+  return { files, dirs, findings };
 }
 
-export function extractZip(files: Map<string, Uint8Array>, destRoot: string): void {
+export function extractZip(files: Map<string, Uint8Array>, destRoot: string, dirs: readonly string[] = []): void {
   for (const [relative, bytes] of files) {
     writeFileAt(destRoot, relative, Buffer.from(bytes));
+  }
+  for (const relative of dirs) {
+    fs.mkdirSync(resolveInside(destRoot, relative, destRoot), { recursive: true });
   }
 }
 
@@ -121,6 +141,9 @@ export function writeZip(root: string, outFile: string): void {
   const record: Record<string, Uint8Array> = {};
   for (const relative of walkFiles(root, root)) {
     record[relative] = new Uint8Array(fs.readFileSync(path.join(root, relative)));
+  }
+  for (const relative of walkEmptyDirs(root, root)) {
+    record[`${relative}/`] = new Uint8Array(0);
   }
   const bytes = zipSync(record, { level: 6 });
   fs.mkdirSync(path.dirname(outFile), { recursive: true });

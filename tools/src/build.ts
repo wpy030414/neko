@@ -4,10 +4,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { AipError, type Finding } from './errors.js';
-import { copyTreeFiles, createStagingSibling, removeDir, replaceDir, writeFileAt, writeJson } from './fsutil.js';
+import { AipError, warningFinding, type Finding } from './errors.js';
+import { copyTreeFiles, createStagingSibling, ensureDirs, removeDir, replaceDir, writeFileAt, writeJson } from './fsutil.js';
 import { emitFrontmatter } from './frontmatter.js';
 import { projectExtensionManifest, projectPluginJson, validatePluginJson } from './manifest.js';
+import { toPosix } from './paths.js';
 import { expandTemplate, loadRules, type Rules } from './rules.js';
 import { inspectSource, type SourceSkill } from './skill.js';
 import { writeZip } from './zip.js';
@@ -58,12 +59,15 @@ export function buildPackage(options: BuildOptions = {}): BuildResult {
   }
 
   const out = path.resolve(options.out ?? path.join(process.cwd(), 'dist', String(plugin['name'])));
+  const payload = excludeOutputFromPayload(sourceRoot, out, skill.payloadFiles, skill.emptyDirs, findings);
   const staging = createStagingSibling(out);
   try {
-    copyTreeFiles(sourceRoot, skill.payloadFiles, path.join(staging, 'skills', skillName));
+    const skillStaging = path.join(staging, 'skills', skillName);
+    copyTreeFiles(sourceRoot, payload.files, skillStaging);
+    ensureDirs(skillStaging, payload.dirs);
     writeJson(staging, 'plugin.json', plugin);
     writeJson(staging, path.posix.join(rules.namespace, 'plugin.json'), manifest);
-    let fileCount = skill.payloadFiles.length + 2;
+    let fileCount = payload.files.length + 2;
     if (options.withAgents === true) fileCount += writeAgentsLayer(staging, rules, skill);
 
     if (out.toLowerCase().endsWith('.zip')) {
@@ -77,6 +81,41 @@ export function buildPackage(options: BuildOptions = {}): BuildResult {
     removeDir(staging);
     throw err;
   }
+}
+
+/**
+ * 输出目录落在源树内时，把该目录从载荷中剔除：否则第二次 build 会把上一次产物打包进包内（幂等性破坏）。
+ * 输出目录等于源树本身或源树被输出目录包含时，构建会删除源树，直接拒绝。
+ */
+function excludeOutputFromPayload(
+  sourceRoot: string,
+  out: string,
+  payloadFiles: readonly string[],
+  emptyDirs: readonly string[],
+  findings: Finding[],
+): { files: string[]; dirs: string[] } {
+  const relative = path.relative(sourceRoot, out);
+  if (relative === '') {
+    throw new AipError('OUT_IS_SOURCE', `输出目录不能是源技能树本身：${out}`);
+  }
+  if (!isInside(sourceRoot, out)) {
+    if (isInside(out, sourceRoot)) {
+      throw new AipError('OUT_CONTAINS_SOURCE', `输出目录不能是源技能树的上级目录（构建会删除源树）：${out}`);
+    }
+    return { files: [...payloadFiles], dirs: [...emptyDirs] };
+  }
+  const relativePosix = toPosix(relative);
+  const prefix = `${relativePosix}/`;
+  findings.push(warningFinding('OUT_INSIDE_SOURCE', `输出目录位于源树内（${relativePosix}），已从载荷（含空目录）中排除以保证二次构建幂等`, out));
+  // 同时排除输出目录自身与 zip 输出文件（--out 指向源树内的 .zip）。
+  const keep = (entry: string): boolean => entry !== relativePosix && !entry.startsWith(prefix);
+  return { files: payloadFiles.filter(keep), dirs: emptyDirs.filter(keep) };
+}
+
+/** child 是否严格位于 parent 之内（不含相等；`..foo` 这类名字不被误判为上级）。 */
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 /** 通用层 agents/<id>.md：frontmatter 提供显示名，正文 = primary 文件字节。 */

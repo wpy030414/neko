@@ -7,8 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { AipError, errorFinding, hasErrors, warningFinding, type Finding } from './errors.js';
-import { assertDirectory, copyTreeFiles, walkFiles, writeFileAt } from './fsutil.js';
-import { emitFrontmatter, parseFrontmatter, splitFrontmatter } from './frontmatter.js';
+import { assertDirectory, copyTreeFiles, ensureDirs, walkEmptyDirs, walkFiles, writeFileAt } from './fsutil.js';
+import { emitFrontmatter, frontmatterBodyBytes, parseFrontmatter } from './frontmatter.js';
 import { isPlainObject, locateExtensionManifest, readJsonFile, validateExtensionManifestDoc, type ManifestPersona } from './manifest.js';
 import { materializePackage } from './package.js';
 import { assertValidId, normalizeId, resolveInside } from './paths.js';
@@ -44,6 +44,15 @@ export function toSkill(pkg: string, out: string | undefined, options: ToSkillOp
 
     const location = locateExtensionManifest(root, pluginDoc);
     findings.push(...location.findings);
+    // 先校验后写盘：扩展清单声明存在但文件缺失等致命错误必须在任何写盘动作之前终止。
+    if (hasErrors(location.findings)) {
+      const first = location.findings.find((finding) => finding.severity === 'error');
+      throw new AipError(
+        first?.code ?? 'MANIFEST_INVALID',
+        `${first?.message ?? '扩展清单定位失败'}（拒绝还原：先校验后写盘）`,
+        first?.path ?? root,
+      );
+    }
     let manifestDoc: unknown = null;
     let personas: ToSkillPersona[] = [];
     if (location.file !== null) {
@@ -64,13 +73,16 @@ export function toSkill(pkg: string, out: string | undefined, options: ToSkillOp
       const skillRoot = resolveInside(root, `skills/${skillName}`, 'source.skill');
       assertDirectory(skillRoot, 'source.skill');
       const target = path.resolve(out ?? path.join(process.cwd(), 'out', skillName));
+      fs.mkdirSync(target, { recursive: true });
       copyTreeFiles(skillRoot, walkFiles(skillRoot, skillRoot), target);
+      ensureDirs(target, walkEmptyDirs(skillRoot, skillRoot));
       return { out: target, skillName, generated: false, findings };
     }
 
     if (personas.length === 0) personas = discoverGenericPersonas(root, findings);
     if (hasErrors(findings)) {
-      throw new AipError('MANIFEST_INVALID', '通用层存在错误，拒绝还原（不产生任何输出）', root);
+      const detail = findings.filter((finding) => finding.severity === 'error').map((finding) => finding.message).join('；');
+      throw new AipError('MANIFEST_INVALID', `通用层存在错误，拒绝还原（不产生任何输出）：${detail}`, root);
     }
     if (personas.length === 0) {
       throw new AipError('NO_PERSONAS', '包内既无 source.skill 也无可还原的人格定义（协议 §8.2）', root);
@@ -106,10 +118,11 @@ export function toSkill(pkg: string, out: string | undefined, options: ToSkillOp
     const primaryPaths = new Set(personas.map((persona) => persona.primary));
     for (const persona of personas) {
       const primaryBytes = fs.readFileSync(resolveInside(root, persona.primary, 'personas[].primary'));
-      const body = splitFrontmatter(primaryBytes.toString('utf8')).body;
+      // 正文按字节切片，非 UTF-8 内容不得经 string 往返被替换为 U+FFFD。
+      const body = frontmatterBodyBytes(primaryBytes);
       plan(
         `personas/${persona.id}.md`,
-        Buffer.concat([Buffer.from(emitFrontmatter({ name: persona.name }), 'utf8'), Buffer.from(body, 'utf8')]),
+        Buffer.concat([Buffer.from(emitFrontmatter({ name: persona.name }), 'utf8'), body]),
       );
       if (persona.avatar !== undefined) {
         const extension = path.posix.extname(persona.avatar).slice(1).toLowerCase() || 'png';
@@ -172,9 +185,14 @@ export function discoverGenericPersonas(root: string, findings: Finding[]): ToSk
     }
     const parsed = parseFrontmatter(fs.readFileSync(path.join(agentsDir, entry.name), 'utf8'));
     const declared = parsed.data['name'];
+    if (declared === undefined || declared.trim() === '') {
+      // 协议 §5：通用层 frontmatter name 必填；缺 name 的包是非法包，不得静默按 id 还原。
+      findings.push(errorFinding('GENERIC_NAME_MISSING', '通用层文件缺少 frontmatter name（协议 §5），拒绝还原', `agents/${entry.name}`));
+      continue;
+    }
     const persona: ToSkillPersona = {
       id,
-      name: declared !== undefined && declared.trim() !== '' ? declared : id,
+      name: declared,
       primary: `agents/${entry.name}`,
       genericLayer: true,
     };

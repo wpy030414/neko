@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { zipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
-import { initSkeleton, readZip, validatePackage, toSkill } from '../src/index.js';
+import { describe, expect, it, vi } from 'vitest';
+import { initSkeleton, isSafeRelativePath, materializePackage, readZip, validatePackage, toSkill } from '../src/index.js';
 import { existsAt, makeSourceTree, tempDir, writeFileAt, writeRules } from './helpers.js';
 
 const PLUGIN_JSON = {
@@ -109,13 +110,50 @@ describe('安全：路径包含与命名（协议 §12）', () => {
   });
 
   it('路径包含判定本身拒绝反斜杠与绝对路径', async () => {
-    const { isSafeRelativePath } = await import('../src/index.js');
+    const { isSafeRelativePath: check } = await import('../src/index.js');
     for (const value of ['..', '../a', 'a/../b', '/abs', 'C:/x', 'a\\b', '', 'a/\u0000b', './']) {
-      expect(isSafeRelativePath(value)).toBe(false);
+      expect(check(value)).toBe(false);
     }
     for (const value of ['a', 'a/b', './a/b', 'a/b.md', 'a-b_c/d.png']) {
-      expect(isSafeRelativePath(value)).toBe(true);
+      expect(check(value)).toBe(true);
     }
+  });
+
+  it('拒绝 Windows ADS 名称（NTFS 备用数据流）：清单引用与 zip 条目都不例外', () => {
+    for (const value of ['plugin.json:hidden', 'a/b:c', 'personas/alpha.md:stream']) {
+      expect(isSafeRelativePath(value)).toBe(false);
+    }
+
+    const root = tempDir();
+    const pkg = writePackage(root, baseManifest({ primary: 'skills/demo/personas/alpha.md:hidden' }));
+    expect(errorCodes(pkg)).toContain('PATH_INVALID');
+
+    const zipFile = path.join(root, 'ads.zip');
+    fs.writeFileSync(zipFile, zipSync({ 'plugin.json:hidden': new Uint8Array([1, 2, 3]) }));
+    const read = readZip(zipFile);
+    expect(read.files.has('plugin.json:hidden')).toBe(false);
+    expect(read.findings.map((finding) => finding.code)).toContain('ZIP_ENTRY_UNSAFE');
+  });
+});
+
+describe('安全：解包失败回收临时目录', () => {
+  it('提取失败时不泄漏临时目录（cleanup 回调尚未返回也必须回收）', () => {
+    const root = tempDir();
+    // 同一路径既是文件又是目录：writeFileAt 写 x 后，x/y 的 mkdir 必然失败。
+    const zipFile = path.join(root, 'conflict.zip');
+    fs.writeFileSync(
+      zipFile,
+      zipSync({ x: new Uint8Array(Buffer.from('file')), 'x/y': new Uint8Array(Buffer.from('nested')) }),
+    );
+
+    const fakeTmp = tempDir('aip-tmp-');
+    const spy = vi.spyOn(os, 'tmpdir').mockReturnValue(fakeTmp);
+    try {
+      expect(() => materializePackage(zipFile, { strict: false })).toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readdirSync(fakeTmp)).toEqual([]);
   });
 });
 

@@ -181,6 +181,37 @@ describe('build：源技能树 → AIP 包', () => {
     expect(readFileAt(restored, 'references/notes.md')).toBe('技能参考资料。\n');
   });
 
+  it('规则 upstream 投影到扩展清单顶层，未设置则不写（协议 §10.1）', () => {
+    const root = tempDir();
+    makeSourceTree(path.join(root, 'src'));
+    const rulesFile = writeRules(path.join(root, 'rules.json'), {
+      extraTopLevel: { upstream: { repository: 'https://example.com/up.git', commit: 'abc123' } },
+    });
+    const result = buildPackage({ dir: path.join(root, 'src'), out: path.join(root, 'pkg'), rulesFile });
+    expect(result.manifest['upstream']).toEqual({ repository: 'https://example.com/up.git', commit: 'abc123' });
+
+    const plainRules = writeRules(path.join(root, 'rules2.json'));
+    const plain = buildPackage({ dir: path.join(root, 'src'), out: path.join(root, 'pkg2'), rulesFile: plainRules });
+    expect(plain.manifest['upstream']).toBeUndefined();
+  });
+
+  it('personas/ 下的非人格 .md 跳过并告警，不中止构建（协议 §3）', () => {
+    const root = tempDir();
+    const src = path.join(root, 'src');
+    makeSourceTree(src, { personas: [{ id: 'alpha', name: '阿尔法' }] });
+    writeFileAt(src, 'personas/README.md', '人格目录说明，不是人格。\n');
+    const rulesFile = writeRules(path.join(root, 'rules.json'), { entries: [] });
+
+    const result = buildPackage({ dir: src, out: path.join(root, 'pkg'), rulesFile });
+    const skipped = result.findings.filter((finding) => finding.code === 'PERSONA_FILE_SKIPPED');
+    expect(skipped.map((finding) => finding.message).join('\n')).toContain('README.md');
+    const ids = (result.manifest['personas'] as Record<string, unknown>[]).map((persona) => persona['id']);
+    expect(ids).toContain('alpha');
+    expect(ids).not.toContain('README');
+    // 说明文档仍在载荷内（按字节随包保留），只是不参与人格映射
+    expect(existsAt(path.join(root, 'pkg'), 'skills/demo/personas/README.md')).toBe(true);
+  });
+
   it('projectExtensionManifest 只做描述：不内联正文', () => {
     const manifest = projectExtensionManifest(
       {

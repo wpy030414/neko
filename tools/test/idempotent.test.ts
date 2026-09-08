@@ -48,6 +48,41 @@ describe('(e) 幂等：二次执行不产生冲突或重复', () => {
     expect(fs.readFileSync(path.join(out, 'important.txt'), 'utf8')).toBe('用户数据，不得被删。\n');
   });
 
+  it('--out 位于源树内且 include 为 "*"：二次 build 不把产物打包进包内（幂等）', () => {
+    const root = tempDir();
+    const src = path.join(root, 'src');
+    makeSourceTree(src, { clutter: false });
+    const rulesFile = writeRules(path.join(root, 'rules.json'), { include: ['*'] });
+    const out = path.join(src, 'pkg');
+
+    const first = buildPackage({ dir: src, out, rulesFile });
+    expect(first.findings.map((finding) => finding.code)).toContain('OUT_INSIDE_SOURCE');
+    const firstDigest = treeDigest(out);
+
+    const second = buildPackage({ dir: src, out, rulesFile });
+    expect(second.findings.filter((finding) => finding.severity === 'error')).toEqual([]);
+    const secondDigest = treeDigest(out);
+    expect(secondDigest).toEqual(firstDigest);
+    expect(Object.keys(secondDigest).some((relative) => relative.startsWith('skills/demo/pkg/'))).toBe(false);
+
+    // --out 指向源树内的 .zip 时同样排除，二次打包逐字节一致
+    const zipOut = path.join(src, 'pkg.zip');
+    buildPackage({ dir: src, out: zipOut, rulesFile });
+    const firstZip = fs.readFileSync(zipOut);
+    buildPackage({ dir: src, out: zipOut, rulesFile });
+    expect(fs.readFileSync(zipOut)).toEqual(firstZip);
+  });
+
+  it('输出目录等于源树或包含源树时拒绝构建（防止删源树）', () => {
+    const root = tempDir();
+    const src = path.join(root, 'src');
+    makeSourceTree(src, { clutter: false });
+    const rulesFile = writeRules(path.join(root, 'rules.json'));
+    expect(() => buildPackage({ dir: src, out: src, rulesFile })).toThrow(/输出目录不能是源技能树本身/);
+    expect(() => buildPackage({ dir: src, out: root, rulesFile })).toThrow(/上级目录/);
+    expect(fs.existsSync(path.join(src, 'SKILL.md'))).toBe(true);
+  });
+
   it('源树中残留旧包产物（dist/）不影响二次构建', () => {
     const root = tempDir();
     const src = path.join(root, 'src');

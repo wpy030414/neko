@@ -10,6 +10,7 @@
 | `formatVersion` | 协议格式版本 | `1` |
 | `namespace` | 扩展命名空间（v1 固定） | `xrl.momoi` |
 | `host` | 源宿主标识（可选，缺失视为通用） | 未设置（按需在规则中开启） |
+| `upstream` | 上游锚定 `{ repository?, commit? }`（可选，投影到清单同名字段，§10.1） | 未设置（按需在规则中开启） |
 | `plugin.name` | `plugin.json` 的 `name`，模板 `{skill}` | `neko` |
 | `plugin.version` | `plugin.json` 的 `version` | `1.0.0` |
 | `plugin.description` | 包描述，模板 `{skill}` | `NEKOPARA 猫娘人格包（源技能 neko）` |
@@ -31,6 +32,8 @@
 
 - 技能名 `{skill}` 取 `SKILL.md` frontmatter 的 `name`（须匹配 `[a-z0-9-]+`），否则回退目录名并给出警告。
 - 黑名单只作用于顶层条目；载荷内部同名目录不会被剔除（避免误删技能自带资源）。
+- 空目录无文件承载，随载荷显式记录（目录形态直接建目录，zip 形态写 `dir/` 条目），`to-skill` 逐字节还原时一并重建（§8.3 往返判据）。
+- 输出目录落在源树内时（如 `--out ./src/dist/pkg`）会从载荷中剔除该目录并给出 `OUT_INSIDE_SOURCE` 警告，避免二次构建把上一次产物打包进包内；输出目录等于源树或包含源树时直接拒绝。
 - 未进入载荷的顶层条目不得静默丢弃：不在黑名单内却被白名单挡下的条目逐条给出 `PAYLOAD_ENTRY_DROPPED` 警告；黑名单命中的条目视为有意裁剪（若同时出现在 `include` 中同样告警）。
 - 符号链接/重解析点一律拒绝（`SYMLINK_UNSUPPORTED`），防止载荷引用插件根之外的内容。
 
@@ -82,17 +85,18 @@
 
 | 门 | 判定 | 失败码 |
 |---|---|---|
-| closed-schema | `plugin.json` 通过内置 Agent Plugins 1.0 schema（未知顶层字段被拒） | `SCHEMA_PLUGIN` |
-| 扩展清单结构 | `formatVersion`、`namespace`、`source.skill`、`personas[]` 字段与类型 | `FORMAT_VERSION_UNSUPPORTED`、`NAMESPACE_INVALID`、`MANIFEST_INVALID` |
-| 路径包含 | 清单内每个路径解析后仍在插件根内；拒绝绝对路径、`..`、反斜杠、控制字符；逐段 lstat 拒绝路径前缀中的符号链接/重解析点（含 Windows junction） | `PATH_INVALID`、`PATH_ESCAPE`、`SYMLINK_UNSUPPORTED` |
-| id 命名 | 人格 id / 技能名 / 通用层文件名匹配 `[a-z0-9-]+`，且不重复 | `ID_INVALID`、`ID_DUPLICATE` |
+| closed-schema | `plugin.json` 通过内置 Agent Plugins 1.0 schema（未知顶层字段被拒）；`plugin.json` 允许带 UTF-8 BOM（读取时剥离） | `SCHEMA_PLUGIN` |
+| 扩展声明 | `plugin.json` 的 `extensions."xrl.momoi"` 一旦出现，必须同时给出 `formatVersion: 1` 与 `./` 开头的 `manifest`（§4.1） | `EXTENSION_DECL_INVALID`、`FORMAT_VERSION_UNSUPPORTED` |
+| 扩展清单结构 | `formatVersion`、`namespace`、`upstream`、`source.skill`、`personas[]` 字段与类型；顶层未知字段告警忽略，`model` 告警，`orchestration` 报错（§2.4/§2.5） | `FORMAT_VERSION_UNSUPPORTED`、`NAMESPACE_INVALID`、`MANIFEST_INVALID`、`ORCHESTRATION_FORBIDDEN`、`MODEL_IGNORED`、`UNKNOWN_MANIFEST_FIELD` |
+| 路径包含 | 清单内每个路径解析后仍在插件根内；拒绝绝对路径、`..`、反斜杠、控制字符、Windows ADS 冒号；逐段 lstat 拒绝路径前缀中的符号链接/重解析点（含 Windows junction） | `PATH_INVALID`、`PATH_ESCAPE`、`SYMLINK_UNSUPPORTED` |
+| id 命名 | 人格 id / 技能名 / 通用层文件名匹配 `[a-z0-9-]+`，且不重复；`id` 与 `primary`、`sourceFile` 的文件基名不一致时告警（§6.2） | `ID_INVALID`、`ID_DUPLICATE`、`ID_FILENAME_MISMATCH`、`ID_SOURCEFILE_MISMATCH` |
 | 文件存在性 | `primary`、`avatar`、`levels` 引用的文件存在 | `FILE_MISSING` |
-| 双形态一致性 | 同一 id 的 `agents/<id>.md` 正文与清单 `primary` 一致 | `DUAL_FORM_MISMATCH` |
-| 往返字节一致 | 包 → `to-skill` 还原 → `build` 重建，载荷/人格正文字节相同；纯人格包另比较 `persona.name` 与 `levels` 文件字节 | `ROUNDTRIP_MISSING`、`ROUNDTRIP_MISMATCH`、`ROUNDTRIP_EXTRA` |
+| 双形态一致性 | 同一 id 的 `agents/<id>.md` 正文与清单 `primary` 逐字节一致（含非 UTF-8 正文） | `DUAL_FORM_MISMATCH` |
+| 往返字节一致 | 包 → `to-skill` 还原 → `build` 重建，载荷/人格正文字节相同；纯人格包另比较 `persona.name` 与 `levels` 文件字节；无 `source.skill` 且 `personas` 为空数组时无判定对象、跳过该门（§6.1） | `ROUNDTRIP_MISSING`、`ROUNDTRIP_MISMATCH`、`ROUNDTRIP_EXTRA` |
 | zip 解压规模 | 解压前按中央目录声明拦截超大条目（单条 128 MiB / 累计 512 MiB / 压缩比 1000:1 / 条目数 20000），超限条目跳过、不解压 | `ZIP_ENTRY_TOO_LARGE`、`ZIP_TOTAL_TOO_LARGE`、`ZIP_RATIO_EXCEEDED`、`ZIP_TOO_MANY_ENTRIES` |
 
 - 出现任一 `error` 即退出码 1，并逐条打印 `ERROR [码] 路径: 说明`；警告不改变退出码。
-- `model` 等未知 persona 字段按协议忽略，仅打印警告（`MODEL_IGNORED`、`UNKNOWN_PERSONA_FIELD`）。
+- `model` 等未知 persona / 清单顶层字段按协议忽略，仅打印警告（`MODEL_IGNORED`、`UNKNOWN_PERSONA_FIELD`、`UNKNOWN_MANIFEST_FIELD`）；`orchestration` 触碰宿主控制面，按 §2.5 报错。
 - 往返门重建时使用「全收」载荷规则（`include: ["*"]`、`exclude: []`）：源树黑名单只作用于 `build` 的源树→包方向，施加到还原树会把包内 `docs/`、`tools/` 等合法条目误判为往返缺失；因此对第三方包同样可判定。
 
 ## 8. 内置 schema 与依赖
@@ -112,7 +116,7 @@
 
 1. **`host` 默认不写**：规则支持该字段，但默认规则未设置（缺失即「通用」，协议 §6.1）。需要记录源宿主时在规则文件中补 `"host": "<标识>"`。
 2. **`init` 产物仅作骨架**：写入源树的 `xrl.momoi/plugin.json` 与 `build` 的投影结果一致，供作者核对映射；`build` 只读规则文件，不读源树内清单，避免双事实源。
-3. **上游锚定**：协议 §10.1 建议记录上游提交标识。清单顶层没有对应字段，需要时写入人格条目的 `metadata`（如 `"upstreamCommit"`），`validate` 不解释该值。
+3. **上游锚定**：协议 §10.1 要求记录上游提交标识。规则顶层 `upstream: { repository?, commit? }` 投影到扩展清单同名顶层字段；未设置则不写。清单校验 `upstream` 的对象形状与字符串字段，未知键告警忽略。
 4. **`to-skill` 对含错清单的包拒绝还原**：先校验再写盘，避免产出半成品；纯 `source.skill` 还原语义不受影响。
 5. **载荷默认全收**：默认规则改为 `include: ["*"]` + 黑名单，落实 §8.1.1/§8.3 的字节往返；黑名单只裁剪构建产物与工具目录，命中的顶层条目按有意裁剪处理，其余被白名单挡下的条目逐条告警（`PAYLOAD_ENTRY_DROPPED`），不静默丢文件。
 6. **zip 解压规模上限**：默认单条 128 MiB、累计 512 MiB、压缩比 1000:1、条目数 20000，在解压前按中央目录声明的尺寸拦截；`readZip` / `materializePackage` 的 `zipLimits` 参数可覆盖。

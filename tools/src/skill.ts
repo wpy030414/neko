@@ -6,9 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AipError, warningFinding, type Finding } from './errors.js';
 import { parseFrontmatter } from './frontmatter.js';
-import { assertSafeRelativePath, assertValidId, ID_PATTERN } from './paths.js';
+import { assertSafeRelativePath, ID_PATTERN } from './paths.js';
 import { expandTemplate, type Rules } from './rules.js';
-import { matchesPattern, walkFiles } from './fsutil.js';
+import { matchesPattern, walkEmptyDirs, walkFiles } from './fsutil.js';
 
 export interface PersonaSpec {
   id: string;
@@ -26,6 +26,8 @@ export interface SourceSkill {
   description?: string;
   /** 载荷文件的源树相对路径（POSIX，已排序）。 */
   payloadFiles: string[];
+  /** 载荷内空目录的源树相对路径（POSIX，已排序）；空目录无文件承载，需显式记录才能往返。 */
+  emptyDirs: string[];
   personas: PersonaSpec[];
 }
 
@@ -41,9 +43,9 @@ export function inspectSource(root: string, rules: Rules): { skill: SourceSkill;
   }
   const parsed = parseFrontmatter(fs.readFileSync(skillMd, 'utf8'));
   const name = resolveSkillName(root, parsed.data['name'], findings);
-  const payloadFiles = selectPayload(root, rules, findings);
-  const personas = discoverPersonas(root, rules, payloadFiles, name, findings);
-  const skill: SourceSkill = { root, name, payloadFiles, personas };
+  const payload = selectPayload(root, rules, findings);
+  const personas = discoverPersonas(root, rules, payload.files, name, findings);
+  const skill: SourceSkill = { root, name, payloadFiles: payload.files, emptyDirs: payload.emptyDirs, personas };
   const description = parsed.data['description'];
   if (description !== undefined) skill.description = description;
   return { skill, findings };
@@ -63,8 +65,13 @@ function resolveSkillName(root: string, declared: string | undefined, findings: 
   return base;
 }
 
-/** 载荷 = 顶层白名单（或全部）减去黑名单；黑名单只作用于顶层条目。 */
-export function selectPayload(root: string, rules: Rules, findings: Finding[]): string[] {
+export interface PayloadSelection {
+  files: string[];
+  emptyDirs: string[];
+}
+
+/** 载荷 = 顶层白名单（或全部）减去黑名单；黑名单只作用于顶层条目。空目录单独记录以便往返还原。 */
+export function selectPayload(root: string, rules: Rules, findings: Finding[]): PayloadSelection {
   const { include, exclude } = rules.skill.payload;
   const includeAll = include.includes('*');
   const topEntries = fs
@@ -81,6 +88,7 @@ export function selectPayload(root: string, rules: Rules, findings: Finding[]): 
   }
 
   const selected: string[] = [];
+  const emptyDirs: string[] = [];
   for (const entryName of topEntries) {
     const excluded = matchesPattern(entryName, exclude);
     const included = includeAll || include.includes(entryName);
@@ -101,12 +109,17 @@ export function selectPayload(root: string, rules: Rules, findings: Finding[]): 
       throw new AipError('SYMLINK_UNSUPPORTED', `载荷中不支持符号链接：${entryName}`, absolute);
     }
     if (stat.isDirectory()) {
+      if (fs.readdirSync(absolute).length === 0) emptyDirs.push(entryName);
       for (const nested of walkFiles(absolute, absolute)) selected.push(`${entryName}/${nested}`);
+      for (const nested of walkEmptyDirs(absolute, absolute)) emptyDirs.push(`${entryName}/${nested}`);
     } else if (stat.isFile()) {
       selected.push(entryName);
     }
   }
-  return selected.sort((a, b) => a.localeCompare(b));
+  return {
+    files: selected.sort((a, b) => a.localeCompare(b)),
+    emptyDirs: emptyDirs.sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 function discoverPersonas(
@@ -165,12 +178,17 @@ function discoverPersonasByConvention(
   if (!fs.existsSync(personasDir) || !fs.statSync(personasDir).isDirectory()) return [];
   const specs: PersonaSpec[] = [];
   const files = fs
-    .readdirSync(personasDir)
-    .filter((name) => name.toLowerCase().endsWith('.md'))
+    .readdirSync(personasDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+    .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
   for (const file of files) {
     const id = file.slice(0, -3);
-    assertValidId(id, '人格 id（由文件名推导）', `personas/${file}`);
+    if (!ID_PATTERN.test(id)) {
+      // personas/ 下的说明文档等非人格 .md 不应中止整次构建：跳过并告警。
+      findings.push(warningFinding('PERSONA_FILE_SKIPPED', `personas/${file} 的文件基名不是合法人格 id（[a-z0-9-]+），已跳过`, `personas/${file}`));
+      continue;
+    }
     const sourceFile = `personas/${file}`;
     const parsed = parseFrontmatter(fs.readFileSync(path.join(personasDir, file), 'utf8'));
     const declared = parsed.data['name'];

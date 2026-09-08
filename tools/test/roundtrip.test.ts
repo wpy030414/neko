@@ -107,6 +107,33 @@ describe('往返：build → to-skill', () => {
     expect(validatePackage(pkg, { rulesFile }).ok).toBe(true);
   });
 
+  it('空目录随包往返：目录形态与 zip 形态都保留（协议 §8.1/§8.3）', () => {
+    const root = tempDir();
+    const src = path.join(root, 'src');
+    makeSourceTree(src, { clutter: false });
+    fs.mkdirSync(path.join(src, 'assets', 'empty'), { recursive: true });
+    fs.mkdirSync(path.join(src, 'assets', 'nested', 'leaf'), { recursive: true });
+    const rulesFile = writeRules(path.join(root, 'rules.json'), { include: ['*'] });
+
+    const pkg = path.join(root, 'pkg');
+    buildPackage({ dir: src, out: pkg, rulesFile });
+    expect(fs.statSync(path.join(pkg, 'skills', 'demo', 'assets', 'empty')).isDirectory()).toBe(true);
+    expect(fs.statSync(path.join(pkg, 'skills', 'demo', 'assets', 'nested', 'leaf')).isDirectory()).toBe(true);
+
+    const restored = path.join(root, 'restored');
+    toSkill(pkg, restored, { rulesFile });
+    expect(fs.statSync(path.join(restored, 'assets', 'empty')).isDirectory()).toBe(true);
+    expect(fs.statSync(path.join(restored, 'assets', 'nested', 'leaf')).isDirectory()).toBe(true);
+
+    const zip = path.join(root, 'pkg.zip');
+    buildPackage({ dir: src, out: zip, rulesFile });
+    const restoredZip = path.join(root, 'restored-zip');
+    toSkill(zip, restoredZip, { rulesFile });
+    expect(fs.statSync(path.join(restoredZip, 'assets', 'empty')).isDirectory()).toBe(true);
+    expect(fs.statSync(path.join(restoredZip, 'assets', 'nested', 'leaf')).isDirectory()).toBe(true);
+    expect(validatePackage(zip, { rulesFile }).ok).toBe(true);
+  });
+
   it('validate 的往返门对往返无损的包通过', () => {
     const root = tempDir();
     const src = path.join(root, 'src');

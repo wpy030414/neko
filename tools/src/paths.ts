@@ -32,7 +32,7 @@ export function assertValidId(value: unknown, kind: string, where: string): stri
   return value;
 }
 
-/** 合法相对路径：非空、无控制字符、无反斜杠、非绝对路径、无 . 或 .. 段。 */
+/** 合法相对路径：非空、无控制字符、无反斜杠、非绝对路径、无 . 或 .. 段、无 Windows ADS 分隔符。 */
 export function isSafeRelativePath(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
   if (CONTROL_CHARS.test(value)) return false;
@@ -44,6 +44,8 @@ export function isSafeRelativePath(value: unknown): value is string {
   if (rest.length === 0) return false;
   for (const segment of rest.split('/')) {
     if (segment === '' || segment === '.' || segment === '..') return false;
+    // `name:stream` 在 Windows 上是 NTFS 备用数据流（ADS），会被静默写入宿主文件；包内路径一律拒绝。
+    if (segment.includes(':')) return false;
   }
   return true;
 }
@@ -65,8 +67,8 @@ export function assertTopLevelName(value: unknown, where: string): string {
     throw new AipError('RULE_ENTRY_INVALID', `顶层条目名非法：${describeValue(value)}`, where);
   }
   if (value === '*') return value;
-  if (value.includes('/') || value.includes('\\') || CONTROL_CHARS.test(value)) {
-    throw new AipError('RULE_ENTRY_INVALID', `顶层条目名不得包含分隔符或控制字符：${describeValue(value)}`, where);
+  if (value.includes('/') || value.includes('\\') || value.includes(':') || CONTROL_CHARS.test(value)) {
+    throw new AipError('RULE_ENTRY_INVALID', `顶层条目名不得包含分隔符、ADS 冒号或控制字符：${describeValue(value)}`, where);
   }
   return value;
 }

@@ -54,6 +54,41 @@ export function walkFiles(root: string, where: string): string[] {
   return collected;
 }
 
+/**
+ * 递归收集「空目录」（不含任何条目）的 POSIX 相对路径（已排序）；根目录本身为空时返回空数组。
+ * 只记录叶子空目录即可：还原时创建它们会隐式创建仅含空子目录的父目录。
+ */
+export function walkEmptyDirs(root: string, where: string): string[] {
+  if (fs.lstatSync(root).isSymbolicLink()) {
+    throw new AipError('SYMLINK_UNSUPPORTED', `不支持符号链接/重解析点：${root}`, where);
+  }
+  const collected: string[] = [];
+  const visit = (dir: string, prefix: string): void => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    if (entries.length === 0) {
+      if (prefix !== '') collected.push(prefix);
+      return;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(dir, entry.name);
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isSymbolicLink()) {
+        throw new AipError('SYMLINK_UNSUPPORTED', `不支持符号链接：${relative}`, where);
+      }
+      if (entry.isDirectory()) visit(absolute, relative);
+    }
+  };
+  visit(root, '');
+  return collected;
+}
+
+/** 在 root 下按相对路径列表创建目录（幂等）。 */
+export function ensureDirs(root: string, dirs: readonly string[]): void {
+  for (const relative of dirs) {
+    fs.mkdirSync(resolveInside(root, relative, root), { recursive: true });
+  }
+}
+
 export function matchesPattern(name: string, patterns: readonly string[]): boolean {
   for (const pattern of patterns) {
     if (pattern === name) return true;

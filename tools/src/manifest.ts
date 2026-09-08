@@ -22,6 +22,9 @@ export interface ManifestPersona {
 }
 
 const PERSONA_KEYS = ['id', 'name', 'primary', 'sourceFile', 'avatar', 'levels', 'metadata'];
+/** 扩展清单顶层字段（协议 §6.1，含 §10.1 上游锚定）。 */
+const MANIFEST_KEYS = ['formatVersion', 'namespace', 'host', 'upstream', 'source', 'personas'];
+const UPSTREAM_KEYS = ['repository', 'commit'];
 
 export function projectPluginJson(rules: Rules, tokens: Record<string, string>): Record<string, unknown> {
   const plugin: Record<string, unknown> = {
@@ -55,6 +58,7 @@ export function projectExtensionManifest(
     namespace: rules.namespace,
   };
   if (rules.host !== undefined) manifest['host'] = rules.host;
+  if (rules.upstream !== undefined) manifest['upstream'] = rules.upstream;
   manifest['source'] = { skill: skillName };
   manifest['personas'] = personas.map((persona) => {
     const projected: Record<string, unknown> = {
@@ -116,17 +120,22 @@ export function locateExtensionManifest(root: string, pluginDoc: unknown): Manif
         if (!isPlainObject(namespaceEntry)) {
           findings.push(errorFinding('EXTENSION_DECL_INVALID', `plugin.json extensions.${PROTOCOL_NAMESPACE} 必须是对象`, 'plugin.json'));
         } else {
+          // 协议 §4.1：声明形态必须完整给出 formatVersion 与 './' 开头的 manifest，缺一即包缺陷。
           const formatVersion = namespaceEntry['formatVersion'];
-          if (formatVersion !== undefined && formatVersion !== PROTOCOL_FORMAT_VERSION) {
+          if (formatVersion === undefined) {
+            findings.push(errorFinding('EXTENSION_DECL_INVALID', `extensions.${PROTOCOL_NAMESPACE}.formatVersion 必填（应为 ${PROTOCOL_FORMAT_VERSION}）`, 'plugin.json'));
+          } else if (formatVersion !== PROTOCOL_FORMAT_VERSION) {
             findings.push(errorFinding('FORMAT_VERSION_UNSUPPORTED', `扩展声明 formatVersion 必须为 ${PROTOCOL_FORMAT_VERSION}，实际为 ${JSON.stringify(formatVersion)}`, 'plugin.json'));
           }
           const manifest = namespaceEntry['manifest'];
-          if (manifest !== undefined) {
-            if (typeof manifest !== 'string') {
-              findings.push(errorFinding('EXTENSION_DECL_INVALID', 'extensions 的 manifest 必须是字符串路径', 'plugin.json'));
-            } else {
-              declared = manifest;
-            }
+          if (manifest === undefined) {
+            findings.push(errorFinding('EXTENSION_DECL_INVALID', `extensions.${PROTOCOL_NAMESPACE}.manifest 必填（扩展清单相对路径）`, 'plugin.json'));
+          } else if (typeof manifest !== 'string') {
+            findings.push(errorFinding('EXTENSION_DECL_INVALID', 'extensions 的 manifest 必须是字符串路径', 'plugin.json'));
+          } else if (!manifest.startsWith('./')) {
+            findings.push(errorFinding('EXTENSION_DECL_INVALID', `extensions 的 manifest 必须以 './' 开头（协议 §4.1），实际为 ${JSON.stringify(manifest)}`, 'plugin.json'));
+          } else {
+            declared = manifest;
           }
         }
       }
@@ -177,8 +186,10 @@ export function readJsonFile(file: string, findings: Finding[]): unknown {
     findings.push(errorFinding('FILE_UNREADABLE', `无法读取：${err instanceof Error ? err.message : String(err)}`, file));
     return null;
   }
+  // 容忍 UTF-8 BOM：JSON.parse 不接受前置 U+FEFF，编辑器保存的清单常带 BOM。
+  const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   try {
-    return JSON.parse(text);
+    return JSON.parse(source);
   } catch (err) {
     findings.push(errorFinding('JSON_INVALID', `不是合法 JSON：${err instanceof Error ? err.message : String(err)}`, file));
     return null;
@@ -198,6 +209,17 @@ export function validateExtensionManifestDoc(doc: unknown, root: string, at: str
     findings.push(errorFinding('MANIFEST_INVALID', '扩展清单必须是对象', at));
     return { personas, findings };
   }
+  // 顶层字段按 closed 语义校验：未知字段告警忽略；协议禁止的 model / orchestration 单独处理。
+  for (const key of Object.keys(doc)) {
+    if (MANIFEST_KEYS.includes(key)) continue;
+    if (key === 'model') {
+      findings.push(warningFinding('MODEL_IGNORED', '扩展清单的 model 字段被忽略：包不携带模型（协议 §2.4）', at));
+    } else if (key === 'orchestration') {
+      findings.push(errorFinding('ORCHESTRATION_FORBIDDEN', '扩展清单不得声明 orchestration：协议不定义任何影响宿主编排或调度的字段（协议 §2.5）', at));
+    } else {
+      findings.push(warningFinding('UNKNOWN_MANIFEST_FIELD', `扩展清单的未知顶层字段 ${JSON.stringify(key)} 被忽略`, at));
+    }
+  }
   if (doc['formatVersion'] !== PROTOCOL_FORMAT_VERSION) {
     findings.push(errorFinding('FORMAT_VERSION_UNSUPPORTED', `formatVersion 必须为 ${PROTOCOL_FORMAT_VERSION}，实际为 ${JSON.stringify(doc['formatVersion'])}`, at));
   }
@@ -208,12 +230,35 @@ export function validateExtensionManifestDoc(doc: unknown, root: string, at: str
   if (host !== undefined && typeof host !== 'string') {
     findings.push(errorFinding('MANIFEST_INVALID', 'host 必须是字符串', at));
   }
+  const upstream = doc['upstream'];
+  if (upstream !== undefined) {
+    if (!isPlainObject(upstream)) {
+      findings.push(errorFinding('MANIFEST_INVALID', 'upstream 必须是 { repository?, commit? } 对象（协议 §10.1）', at));
+    } else {
+      for (const key of Object.keys(upstream)) {
+        if (UPSTREAM_KEYS.includes(key)) continue;
+        findings.push(warningFinding('UNKNOWN_MANIFEST_FIELD', `upstream 的未知字段 ${JSON.stringify(key)} 被忽略`, at));
+      }
+      for (const key of UPSTREAM_KEYS) {
+        const value = upstream[key];
+        if (value !== undefined && typeof value !== 'string') {
+          findings.push(errorFinding('MANIFEST_INVALID', `upstream.${key} 必须是字符串`, at));
+        }
+      }
+    }
+  }
   const source = doc['source'];
   if (source !== undefined) {
     if (!isPlainObject(source) || typeof source['skill'] !== 'string') {
       findings.push(errorFinding('MANIFEST_INVALID', 'source 必须是 { skill: string }', at));
     } else if (!/^[a-z0-9-]+$/.test(source['skill'])) {
       findings.push(errorFinding('ID_INVALID', `source.skill 必须匹配 [a-z0-9-]+，实际为 ${JSON.stringify(source['skill'])}`, at));
+    } else {
+      for (const key of Object.keys(source)) {
+        if (key !== 'skill') {
+          findings.push(warningFinding('UNKNOWN_MANIFEST_FIELD', `source 的未知字段 ${JSON.stringify(key)} 被忽略`, at));
+        }
+      }
     }
   }
   const personasRaw = doc['personas'];
@@ -270,6 +315,10 @@ export function validateExtensionManifestDoc(doc: unknown, root: string, at: str
         findings.push(errorFinding('PATH_INVALID', `sourceFile 不是安全的相对路径：${JSON.stringify(sourceFile)}`, where));
       } else {
         persona.sourceFile = sourceFile;
+        const sourceBase = path.posix.basename(sourceFile, path.posix.extname(sourceFile));
+        if (sourceBase !== id) {
+          findings.push(warningFinding('ID_SOURCEFILE_MISMATCH', `sourceFile 文件基名 ${JSON.stringify(sourceBase)} 与 id ${JSON.stringify(id)} 不一致（协议 §6.2）`, where));
+        }
       }
     }
     const avatar = entry['avatar'];
