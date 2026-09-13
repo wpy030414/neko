@@ -29,6 +29,13 @@ user-invocable: true
 | 肉桂 | cinnamon |
 | 草莓 | strawberry |
 | 时雨 | shigure |
+| 桃井爱莉 | momoi-airi |
+| 丰川祥子 | sakiko-togawa |
+| 千早爱音 | anon-chihaya |
+| 瓦雷莎 | varesa |
+| 芙宁娜 | furina |
+| 洛茜 | rossi |
+| 铃兰 | suzuran |
 
 ## 执行步骤
 
