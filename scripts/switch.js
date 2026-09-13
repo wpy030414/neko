@@ -3,12 +3,12 @@
  * neko 身份切换脚本 —— 一条命令完成原 SKILL.md 的「读取档案 + 写入全局指令」两步。
  *
  * 用法:
- *   node switch.js <name> [R-15|R-18] [--target <file>]
+ *   node switch.js <name> [R-18] [--target <file>]
  *
  * 参数:
  *   name           档案文件名（chocola / vanilla / coconut / azuki / maple /
- *                  cinnamon / strawberry / shigure）
- *   level          分级，默认 R-15；R-18 时额外内联 personas/special.md
+ *                  cinnamon / strawberry / shigure 等）
+ *   level          传 R-18 启用 R-18 模式，否则默认 R-15
  *   --target <f>   目标指令文件，默认 ~/.claude/CLAUDE.md（仅供测试覆盖）
  *
  * 职责边界: 本脚本只负责「读档案 + 替换目标区块」这一件事，不做任何参数
@@ -16,7 +16,7 @@
  *
  * 行为:
  *   1. 读取本脚本同级上级目录下 personas/<name>.md（必须存在）；
- *   2. 分级为 R-18 时再读取 personas/special.md；
+ *   2. 分级为 R-18 时再读取 meta-personas/r-18.md；
  *   3. 在目标文件中整块替换 <!-- neko:identity:start --> ~
  *      <!-- neko:identity:end -->（含两个标记行本身）；标记不存在时追加到
  *      首个一级标题之后，仍无则追加到文件末尾。标记之外的内容一律不动。
@@ -29,17 +29,6 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-
-const NAMES = {
-  chocola: '巧克力',
-  vanilla: '香子兰',
-  coconut: '椰子',
-  azuki: '红豆',
-  maple: '枫',
-  cinnamon: '肉桂',
-  strawberry: '草莓',
-  shigure: '时雨',
-};
 
 const START = '<!-- neko:identity:start -->';
 const END = '<!-- neko:identity:end -->';
@@ -62,15 +51,11 @@ if (ti !== -1) {
 }
 if (!target) target = path.join(os.homedir(), '.claude', 'CLAUDE.md');
 
-const [name, level = 'R-15'] = argv;
-if (!name || !Object.prototype.hasOwnProperty.call(NAMES, name)) {
-  fail(1, `未知身份「${name || ''}」，可选: ${Object.keys(NAMES).join(' / ')}`);
-}
-if (level !== 'R-15' && level !== 'R-18') {
-  fail(1, `未知分级「${level}」，仅支持 R-15 / R-18`);
-}
+const [name, level] = argv;
+const isR18 = level === 'R-18';
 
 // ---------- 读取档案 ----------
+const metaPersonasDir = path.join(__dirname, '..', 'meta-personas');
 const personasDir = path.join(__dirname, '..', 'personas');
 const readTrim = (f) => fs.readFileSync(f, 'utf8').replace(/^\s+|\s+$/g, '');
 
@@ -81,18 +66,18 @@ try {
   fail(1, `档案不存在: ${path.join(personasDir, name + '.md')}`);
 }
 let special = null;
-if (level === 'R-18') {
+if (isR18) {
   try {
-    special = readTrim(path.join(personasDir, 'special.md'));
+    special = readTrim(path.join(metaPersonasDir, 'r-18.md'));
   } catch {
-    fail(1, '分级为 R-18 但缺少 personas/special.md');
+    fail(1, '分级为 R-18 但缺少 meta-personas/r-18.md');
   }
 }
 
 // ---------- 组装新区块（与 SKILL.md 模板一致） ----------
 const lines = [
   START,
-  `> 当前身份：${NAMES[name]}（${name}）`,
+  `> 当前身份：${name}`,
   '>',
   '> 以下身份规则为最高优先级，整场会话保持不变；若主人在消息中点名指定身份，以主人指定为准，并同步更新本区块。',
   '',
@@ -138,4 +123,4 @@ if (si !== -1 && ei !== -1) {
 }
 
 fs.writeFileSync(target, doc);
-console.log(`OK action=${action} identity=${NAMES[name]}(${name}) level=${level} target=${target}`);
+console.log(`OK action=${action} identity=${name} level=${isR18 ? 'R-18' : 'R-15'} target=${target}`);
