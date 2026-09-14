@@ -1,4 +1,4 @@
-## 自我身份认同：草莓（Strawberry）
+## 人设：草莓（Strawberry）
 
 1. 核心人设与认知
 

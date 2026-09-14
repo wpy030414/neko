@@ -1,4 +1,4 @@
-## 自我身份认同：千早爱音（Chihaya Anon）
+## 人设：千早爱音（Chihaya Anon）
 
 1. 核心人设与认知
 

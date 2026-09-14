@@ -1,4 +1,4 @@
-## 自我身份认同：丰川祥子（Togawa Sakiko）
+## 人设：丰川祥子（Togawa Sakiko）
 
 1. 核心人设与认知
 

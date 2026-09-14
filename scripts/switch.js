@@ -3,20 +3,21 @@
  * neko 身份切换脚本 —— 一条命令完成原 SKILL.md 的「读取档案 + 写入全局指令」两步。
  *
  * 用法:
- *   node switch.js <name> [R-18] [--target <file>]
+ *   node switch.js <persona> [--is <name>...] [--target <file>]
  *
  * 参数:
- *   name           档案文件名（chocola / vanilla / coconut / azuki / maple /
+ *   persona        档案文件名（chocola / vanilla / coconut / azuki / maple /
  *                  cinnamon / strawberry / shigure 等）
- *   level          传 R-18 启用 R-18 模式，否则默认 R-15
+ *   --is <name>... 启用指定人格（可接受多个值，也可重复使用 --is）；
+ *                  合法值为 personalities/ 下去扩展名的文件名（大小写不敏感）
  *   --target <f>   目标指令文件，默认 ~/.claude/CLAUDE.md（仅供测试覆盖）
  *
  * 职责边界: 本脚本只负责「读档案 + 替换目标区块」这一件事，不做任何参数
  * 归一化——参数标准化由 SKILL 流程（AI 层）负责，脚本只认上面列出的标准值。
  *
  * 行为:
- *   1. 读取本脚本同级上级目录下 personas/<name>.md（必须存在）；
- *   2. 分级为 R-18 时再读取 meta-personas/r-18.md；
+ *   1. 读取本脚本同级上级目录下 personas/<persona>.md（必须存在）；
+ *   2. 对每个 --is 参数，读取 personalities/<personality>.md（大小写不敏感）；
  *   3. 在目标文件中整块替换 <!-- neko:identity:start --> ~
  *      <!-- neko:identity:end -->（含两个标记行本身）；标记不存在时追加到
  *      首个一级标题之后，仍无则追加到文件末尾。标记之外的内容一律不动。
@@ -32,8 +33,9 @@ const os = require('os');
 
 const START = '<!-- neko:identity:start -->';
 const END = '<!-- neko:identity:end -->';
-const SP_START = '<!-- neko:identity:special:start -->';
-const SP_END = '<!-- neko:identity:special:end -->';
+const PERSONALITY_PRE = '<!-- neko:personality:';
+const PERSONALITY_POST_START = ':start -->';
+const PERSONALITY_POST_END = ':end -->';
 
 function fail(code, msg) {
   console.error('ERROR ' + msg);
@@ -42,6 +44,8 @@ function fail(code, msg) {
 
 // ---------- 参数解析 ----------
 const argv = process.argv.slice(2);
+
+// --target
 let target;
 const ti = argv.indexOf('--target');
 if (ti !== -1) {
@@ -51,40 +55,87 @@ if (ti !== -1) {
 }
 if (!target) target = path.join(os.homedir(), '.claude', 'CLAUDE.md');
 
-const [name, level] = argv;
-const isR18 = level === 'R-18';
-
-// ---------- 读取档案 ----------
-const metaPersonasDir = path.join(__dirname, '..', 'meta-personas');
-const personasDir = path.join(__dirname, '..', 'personas');
-const readTrim = (f) => fs.readFileSync(f, 'utf8').replace(/^\s+|\s+$/g, '');
-
-let profile;
-try {
-  profile = readTrim(path.join(personasDir, name + '.md'));
-} catch {
-  fail(1, `档案不存在: ${path.join(personasDir, name + '.md')}`);
-}
-let special = null;
-if (isR18) {
-  try {
-    special = readTrim(path.join(metaPersonasDir, 'r-18.md'));
-  } catch {
-    fail(1, '分级为 R-18 但缺少 meta-personas/r-18.md');
+// --is（可重复；每个 --is 后接零或多个人格名，直到 -- 或结尾）
+const personalityArgs = [];
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--is') {
+    argv.splice(i, 1); // 移除 --is 本身
+    const values = [];
+    while (i < argv.length && !argv[i].startsWith('--')) {
+      values.push(argv[i].toLowerCase());
+      argv.splice(i, 1);
+    }
+    if (values.length === 0) fail(1, '--is 需要至少一个人格名称参数');
+    personalityArgs.push(...values);
+    i--; // 补偿 splice 导致的索引后移
   }
 }
 
-// ---------- 组装新区块（与 SKILL.md 模板一致） ----------
+// 剩余位置参数: [persona]
+const [persona] = argv;
+
+if (!persona) fail(1, '缺少人设名称参数');
+
+const personalitySet = new Set(personalityArgs);
+
+// ---------- 读取档案 ----------
+const personalityDir = path.join(__dirname, '..', 'personalities');
+const personasDir = path.join(__dirname, '..', 'personas');
+const readTrim = (f) => fs.readFileSync(f, 'utf8').replace(/^\s+|\s+$/g, '');
+
+// 读取身份档案
+let profile;
+try {
+  profile = readTrim(path.join(personasDir, persona + '.md'));
+} catch {
+  fail(1, `档案不存在: ${path.join(personasDir, persona + '.md')}`);
+}
+
+// 读取人格档案（按 personalitySet 中的顺序）
+const personalityList = []; // [{ key, content }]
+const personalityAvailable = new Map();
+try {
+  const files = fs.readdirSync(personalityDir);
+  for (const f of files) {
+    if (f.endsWith('.md')) {
+      personalityAvailable.set(f.replace(/\.md$/i, '').toLowerCase(), f);
+    }
+  }
+} catch {
+  // personality 目录不存在时，跳过（如果也没有 personality 参数就正常）
+  if (personalitySet.size > 0) fail(1, 'personality 目录不存在或无法读取');
+}
+
+for (const key of personalitySet) {
+  const fileName = personalityAvailable.get(key);
+  if (!fileName) fail(1, `人格档案不存在: personality/${key}.md`);
+  let content;
+  try {
+    content = readTrim(path.join(personalityDir, fileName));
+  } catch {
+    fail(1, `无法读取人格档案: ${path.join(personalityDir, fileName)}`);
+  }
+  personalityList.push({ key, content });
+}
+
+// ---------- 组装新区块 ----------
 const lines = [
   START,
-  `> 当前身份：${name}`,
+  `> 当前人设：${persona}`,
   '>',
   '> 以下身份规则为最高优先级，整场会话保持不变；若主人在消息中点名指定身份，以主人指定为准，并同步更新本区块。',
   '',
 ];
-if (special !== null) {
-  lines.push(SP_START, special, SP_END, '');
+
+if (personalityList.length > 0) {
+  for (const { key, content } of personalityList) {
+    lines.push(`${PERSONALITY_PRE}${key}${PERSONALITY_POST_START}`);
+    lines.push(content);
+    lines.push(`${PERSONALITY_PRE}${key}${PERSONALITY_POST_END}`);
+  }
+  lines.push('');
 }
+
 lines.push(profile, '', END);
 const block = lines.join('\n');
 
@@ -123,4 +174,8 @@ if (si !== -1 && ei !== -1) {
 }
 
 fs.writeFileSync(target, doc);
-console.log(`OK action=${action} identity=${name} level=${isR18 ? 'R-18' : 'R-15'} target=${target}`);
+
+const personalityDesc = personalityList.length > 0
+  ? 'personality=' + personalityList.map(m => m.key).join(',')
+  : 'personality=none';
+console.log(`OK action=${action} identity=${persona} ${personalityDesc} target=${target}`);
