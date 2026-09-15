@@ -3,13 +3,15 @@
  * neko 身份切换脚本 —— 一条命令完成原 SKILL.md 的「读取档案 + 写入全局指令」两步。
  *
  * 用法:
- *   node switch.js <persona> [--is <name>...] [--target <file>]
+ *   node switch.js <persona> [--is <name>...] [--in <name>] [--target <file>]
  *
  * 参数:
  *   persona        档案文件名（chocola / vanilla / coconut / azuki / maple /
  *                  cinnamon / strawberry / shigure 等）
  *   --is <name>... 启用指定人格（可接受多个值，也可重复使用 --is）；
  *                  合法值为 personalities/ 下去扩展名的文件名（大小写不敏感）
+ *   --in <name>    启用指定场景（仅一个值）；
+ *                  合法值为 scenarios/ 下去扩展名的文件名（大小写不敏感）
  *   --target <f>   目标指令文件，默认 ~/.claude/CLAUDE.md（仅供测试覆盖）
  *
  * 职责边界: 本脚本只负责「读档案 + 替换目标区块」这一件事，不做任何参数
@@ -33,6 +35,9 @@ const os = require('os');
 
 const START = '<!-- neko:identity:start -->';
 const END = '<!-- neko:identity:end -->';
+const SCENARIO_PRE = '<!-- neko:scenario:';
+const SCENARIO_POST_START = ':start -->';
+const SCENARIO_POST_END = ':end -->';
 const PERSONALITY_PRE = '<!-- neko:personality:';
 const PERSONALITY_POST_START = ':start -->';
 const PERSONALITY_POST_END = ':end -->';
@@ -67,6 +72,20 @@ for (let i = 0; i < argv.length; i++) {
     }
     if (values.length === 0) fail(1, '--is 需要至少一个人格名称参数');
     personalityArgs.push(...values);
+    i--; // 补偿 splice 导致的索引后移
+  }
+}
+
+// --in <name>（仅一个值，后面的值覆盖前面的）
+let scenarioArg = null;
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--in') {
+    argv.splice(i, 1); // 移除 --in 本身
+    if (i >= argv.length || argv[i].startsWith('--')) {
+      fail(1, '--in 需要一个场景名称参数');
+    }
+    scenarioArg = argv[i].toLowerCase();
+    argv.splice(i, 1);
     i--; // 补偿 splice 导致的索引后移
   }
 }
@@ -118,6 +137,34 @@ for (const key of personalitySet) {
   personalityList.push({ key, content });
 }
 
+// 读取场景档案（如果指定了 --in）
+const scenariosDir = path.join(__dirname, '..', 'scenarios');
+let scenarioContent = null;
+let scenarioKey = null;
+
+if (scenarioArg) {
+  let scenarioFile = null;
+  try {
+    const sFiles = fs.readdirSync(scenariosDir);
+    const sLower = scenarioArg;
+    for (const f of sFiles) {
+      if (f.endsWith('.md') && f.replace(/\.md$/i, '').toLowerCase() === sLower) {
+        scenarioFile = f;
+        break;
+      }
+    }
+  } catch {
+    fail(1, 'scenarios 目录不存在或无法读取');
+  }
+  if (!scenarioFile) fail(1, `场景档案不存在: scenarios/${scenarioArg}.md`);
+  try {
+    scenarioContent = readTrim(path.join(scenariosDir, scenarioFile));
+  } catch {
+    fail(1, `无法读取场景档案: ${path.join(scenariosDir, scenarioFile)}`);
+  }
+  scenarioKey = scenarioArg;
+}
+
 // ---------- 组装新区块 ----------
 const lines = [
   START,
@@ -127,7 +174,14 @@ const lines = [
   '',
 ];
 
-if (personalityList.length > 0) {
+if (scenarioContent && scenarioKey) {
+    lines.push(`${SCENARIO_PRE}${scenarioKey}${SCENARIO_POST_START}`);
+    lines.push(scenarioContent);
+    lines.push(`${SCENARIO_PRE}${scenarioKey}${SCENARIO_POST_END}`);
+    lines.push('');
+  }
+
+  if (personalityList.length > 0) {
   for (const { key, content } of personalityList) {
     lines.push(`${PERSONALITY_PRE}${key}${PERSONALITY_POST_START}`);
     lines.push(content);
@@ -175,7 +229,8 @@ if (si !== -1 && ei !== -1) {
 
 fs.writeFileSync(target, doc);
 
+const scenarioDesc = scenarioKey ? ' scenario=' + scenarioKey : '';
 const personalityDesc = personalityList.length > 0
   ? 'personality=' + personalityList.map(m => m.key).join(',')
   : 'personality=none';
-console.log(`OK action=${action} identity=${persona} ${personalityDesc} target=${target}`);
+console.log(`OK action=${action} identity=${persona} ${personalityDesc}${scenarioDesc} target=${target}`);
