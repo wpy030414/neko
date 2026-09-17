@@ -36,6 +36,8 @@ user-invocable: true
 | 瓦雷莎   | varesa        |
 | 芙宁娜   | furina        |
 | 洛茜     | rossi         |
+| 阿米娅   | amiya         |
+| 艾雅法拉 | eyjafjalla    |
 | 铃兰     | suzuran       |
 
 ## 人格（可选，多个）
