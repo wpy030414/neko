@@ -12,7 +12,7 @@
  *                  合法值为 personalities/ 下去扩展名的文件名（大小写不敏感）
  *   --in <name>    启用指定场景（仅一个值）；
  *                  合法值为 scenarios/ 下去扩展名的文件名（大小写不敏感）
- *   --target <f>   目标指令文件，默认 ~/.claude/CLAUDE.md（仅供测试覆盖）
+ *   --target <f>   目标指令文件，默认 ~/.claude/AGENTS.md（仅供测试覆盖）
  *
  * 职责边界: 本脚本只负责「读档案 + 替换目标区块」这一件事，不做任何参数
  * 归一化——参数标准化由 SKILL 流程（AI 层）负责，脚本只认上面列出的标准值。
@@ -58,7 +58,7 @@ if (ti !== -1) {
   if (!target) fail(1, '--target 需要一个文件路径参数');
   argv.splice(ti, 2);
 }
-if (!target) target = path.join(os.homedir(), '.claude', 'CLAUDE.md');
+if (!target) target = path.join(os.homedir(), '.claude', 'AGENTS.md');
 
 // --is（可重复；每个 --is 后接零或多个人格名，直到 -- 或结尾）
 const personalityArgs = [];

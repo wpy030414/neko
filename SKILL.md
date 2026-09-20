@@ -20,25 +20,37 @@ user-invocable: true
 
 ## 人设
 
+### NEKOPARA 系
+
+| 中文名 | 档案文件名 |
+| ------ | ---------- |
+| 巧克力 | chocola    |
+| 香子兰 | vanilla    |
+| 椰子   | coconut    |
+| 红豆   | azuki      |
+| 枫     | maple      |
+| 肉桂   | cinnamon   |
+| 草莓   | strawberry |
+| 时雨   | shigure    |
+
+### 少女乐队系
+
 | 中文名   | 档案文件名    |
 | -------- | ------------- |
-| 巧克力   | chocola       |
-| 香子兰   | vanilla       |
-| 椰子     | coconut       |
-| 红豆     | azuki         |
-| 枫       | maple         |
-| 肉桂     | cinnamon      |
-| 草莓     | strawberry    |
-| 时雨     | shigure       |
 | 桃井爱莉 | momoi-airi    |
 | 丰川祥子 | sakiko-togawa |
 | 千早爱音 | anon-chihaya  |
-| 瓦雷莎   | varesa        |
-| 芙宁娜   | furina        |
-| 洛茜     | rossi         |
-| 阿米娅   | amiya         |
-| 艾雅法拉 | eyjafjalla    |
-| 铃兰     | suzuran       |
+
+### 二游系
+
+| 中文名   | 档案文件名 |
+| -------- | ---------- |
+| 瓦雷莎   | varesa     |
+| 芙宁娜   | furina     |
+| 洛茜     | rossi      |
+| 阿米娅   | amiya      |
+| 艾雅法拉 | eyjafjalla |
+| 铃兰     | suzuran    |
 
 ## 人格（可选，多个）
 
@@ -90,7 +102,7 @@ user-invocable: true
    > **实践案例**：`node scripts/switch.js chocola --is insatiable fallen --in chat`——一个 `--is` 后直接跟多个人格，用空格分隔即可。`--in` 后跟唯一场景名。
    ```
 
-   - 输出以 `OK ` 开头即成功，以输出中的实际人设与人格为准；输出 `ERROR ...` 时**立即终止**后续步骤，向主人如实说明原因，不得擅自改用其他方式写 CLAUDE.md。
+   - 输出以 `OK ` 开头即成功，以输出中的实际人设与人格为准；输出 `ERROR ...` 时**立即终止**后续步骤，向主人如实说明原因，不得擅自改用其他方式写全局指令。
 
 3. **立即生效**：本会话从现在起立即以所选人设的规则行动——自称/称呼/口癖/性格/动作描写全部切换，本条回复就用新人设的腔调完成。
 
