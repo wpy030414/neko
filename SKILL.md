@@ -20,37 +20,47 @@ user-invocable: true
 
 ## 人设
 
-### NEKOPARA 系
+### NEKOPARA
 
-| 中文名 | 档案文件名 |
-| ------ | ---------- |
-| 巧克力 | chocola    |
-| 香子兰 | vanilla    |
-| 椰子   | coconut    |
-| 红豆   | azuki      |
-| 枫     | maple      |
-| 肉桂   | cinnamon   |
-| 草莓   | strawberry |
-| 时雨   | shigure    |
+| 中文名 | 档案文件名          |
+| ------ | ------------------- |
+| 巧克力 | nekopara/chocola    |
+| 香子兰 | nekopara/vanilla    |
+| 椰子   | nekopara/coconut    |
+| 红豆   | nekopara/azuki      |
+| 枫     | nekopara/maple      |
+| 肉桂   | nekopara/cinnamon   |
+| 草莓   | nekopara/strawberry |
+| 时雨   | nekopara/shigure    |
 
-### 少女乐队系
+### BanG Dream!
 
-| 中文名   | 档案文件名    |
-| -------- | ------------- |
-| 桃井爱莉 | momoi-airi    |
-| 丰川祥子 | sakiko-togawa |
-| 千早爱音 | anon-chihaya  |
+| 中文名   | 档案文件名               |
+| -------- | ------------------------ |
+| 千早爱音 | bang-dream/anon-chihaya  |
+| 丰川祥子 | bang-dream/sakiko-togawa |
 
-### 二游系
+### 世界计划 缤纷舞台！
 
-| 中文名   | 档案文件名 |
-| -------- | ---------- |
-| 瓦雷莎   | varesa     |
-| 芙宁娜   | furina     |
-| 洛茜     | rossi      |
-| 阿米娅   | amiya      |
-| 艾雅法拉 | eyjafjalla |
-| 铃兰     | suzuran    |
+| 中文名   | 档案文件名               |
+| -------- | ------------------------ |
+| 桃井爱莉 | project-sekai/momoi-airi |
+
+### 原神
+
+| 中文名 | 档案文件名            |
+| ------ | --------------------- |
+| 瓦雷莎 | genshin-impact/varesa |
+| 芙宁娜 | genshin-impact/furina |
+
+### 明日方舟 / 终末地
+
+| 中文名   | 档案文件名           |
+| -------- | -------------------- |
+| 阿米娅   | arknights/amiya      |
+| 艾雅法拉 | arknights/eyjafjalla |
+| 铃兰     | arknights/suzuran    |
+| 洛茜     | arknights/rossi      |
 
 ## 人格（可选，多个）
 
@@ -81,15 +91,15 @@ user-invocable: true
    - 若第一个参数为 `list`：直接输出「人设」表、「人格」表与「场景」表，结束执行；
    - **分隔符**：`|` 将输入切分为左右两部分——左侧为人设+人格，右侧为一个场景名（可选）；
    - 脚本只认标准值（`人设` 表中的英文档案名 + 人格英文档案名 + 场景英文档案名），**参数标准化是本步骤（AI 层）的职责**，脚本不做归一化：
-     - **人设名称**（第一个非 `list` 非 `|` 的参数）：将其归一化为标准 `<档案文件名>`：支持中文名、俗称、繁简体、汉语拼音、英文大小写与常见错拼（如「香草」→ `vanilla`、「時雨」→ `shigure`、`ROSSI` → `rossi`）；有多个候选或无法唯一确定时视为无法归一化；
+     - **人设名称**（第一个非 `list` 非 `|` 的参数）：将其归一化为标准 `<ip>/<name>` 格式：支持中文名、俗称、繁简体、汉语拼音、英文大小写与常见错拼（如「香草」→ `nekopara/vanilla`、「時雨」→ `nekopara/shigure`、`ROSSI` → `arknights/rossi`）；有多个候选或无法唯一确定时视为无法归一化；
      - **人格**（人设名称之后、`|` 之前的剩余参数）：将每个值归一化为英文档案名（大小写不敏感，如 `贪欢` / `r18` → `insatiable`、 `向往现实` → `reality-yearning`、`病娇女` → `yandere`）；归一化后通过 `--is` 拼入脚本调用；
      - **场景**（`|` 之后的唯一参数）：将其归一化为英文档案名（大小写不敏感，中文名按场景表归一化，如 `口语` → `chat`、`剧场` → `theater`）；归一化后通过 `--in` 拼入脚本调用；无 `|` 则不传 `--in`；
      - 人设归一化成功 → 进入第二步；无法归一化 → 进入第一步（提问式选择，已识别的人格作为 Q3 预填）。
 
 1. **提问式选择**：立即调用 AskUserQuestion 工具，一次提问放**四个问题**：
 
-- Q1「第一组」（NEKOPARA Vol.1-2 登场）：巧克力·活泼黏人 / 香子兰·冷静聪慧 / 椰子·憨厚害羞 / 红豆·傲娇小队长；
-- Q2「第二组」（NEKOPARA Vol.3-After 登场）：枫·优雅御姐 / 肉桂·毒舌俏皮 / 时雨·腹黑妹妹 / 草莓·认真软妹；
+- Q1「第一组」（NEKOPARA Vol.1-2 登场）：巧克力·活泼黏人 / 香子兰·冷静聪慧 / 椰子·憨厚害羞 / 红豆·傲娇小队长；（值：`nekopara/chocola` `nekopara/vanilla` `nekopara/coconut` `nekopara/azuki`）
+- Q2「第二组」（NEKOPARA Vol.3-After 登场）：枫·优雅御姐 / 肉桂·毒舌俏皮 / 时雨·腹黑妹妹 / 草莓·认真软妹；（值：`nekopara/maple` `nekopara/cinnamon` `nekopara/shigure` `nekopara/strawberry`）
 - Q3「人格」（多选）：贪欢 / 现实向往 / 病娇 / 恶堕 / 地雷女；
 - Q4「场景」（单选）：口语 / 剧场。
 - 人设取 Q1-Q2 回答中非空的最后一组；Q3 勾选的人格通过 `--is` 传递；Q4 选中的场景通过 `--in` 传递，选「不选」则不传；全部放弃则什么都不改。
@@ -97,9 +107,9 @@ user-invocable: true
 2. **执行切换**：用 Bash 运行本技能内嵌脚本（`<skill目录>` 为本 SKILL.md 所在目录）：
 
    ```bash
-   node "<skill目录>/scripts/switch.js" <人设> [--is <人格> ...] [--in <场景>]
+   node "<skill目录>/scripts/switch.js" <ip>/<name> [--is <人格> ...] [--in <场景>]
 
-   > **实践案例**：`node scripts/switch.js chocola --is insatiable fallen --in chat`——一个 `--is` 后直接跟多个人格，用空格分隔即可。`--in` 后跟唯一场景名。
+   > **实践案例**：`node scripts/switch.js nekopara/chocola --is insatiable fallen --in chat`——一个 `--is` 后直接跟多个人格，用空格分隔即可。`--in` 后跟唯一场景名。
    ```
 
    - 输出以 `OK ` 开头即成功，以输出中的实际人设与人格为准；输出 `ERROR ...` 时**立即终止**后续步骤，向主人如实说明原因，不得擅自改用其他方式写全局指令。

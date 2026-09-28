@@ -3,11 +3,10 @@
  * neko 身份切换脚本 —— 一条命令完成原 SKILL.md 的「读取档案 + 写入全局指令」两步。
  *
  * 用法:
- *   node switch.js <persona> [--is <name>...] [--in <name>] [--target <file>]
+ *   node switch.js <ip>/<name> [--is <name>...] [--in <name>] [--target <file>]
  *
  * 参数:
- *   persona        档案文件名（chocola / vanilla / coconut / azuki / maple /
- *                  cinnamon / strawberry / shigure 等）
+ *   <ip>/<name>    档案路径（nekopara/chocola / arknights/amiya 等）
  *   --is <name>... 启用指定人格（可接受多个值，也可重复使用 --is）；
  *                  合法值为 personalities/ 下去扩展名的文件名（大小写不敏感）
  *   --in <name>    启用指定场景（仅一个值）；
@@ -18,7 +17,7 @@
  * 归一化——参数标准化由 SKILL 流程（AI 层）负责，脚本只认上面列出的标准值。
  *
  * 行为:
- *   1. 读取本脚本同级上级目录下 personas/<persona>.md（必须存在）；
+ *   1. 读取本脚本同级上级目录下 personas/<ip>/<name>.md（必须存在）；
  *   2. 对每个 --is 参数，读取 personalities/<personality>.md（大小写不敏感）；
  *   3. 在目标文件中整块替换 <!-- neko:identity:start --> ~
  *      <!-- neko:identity:end -->（含两个标记行本身）；标记不存在时追加到
@@ -35,12 +34,6 @@ const os = require('os');
 
 const START = '<!-- neko:identity:start -->';
 const END = '<!-- neko:identity:end -->';
-const SCENARIO_PRE = '<!-- neko:scenario:';
-const SCENARIO_POST_START = ':start -->';
-const SCENARIO_POST_END = ':end -->';
-const PERSONALITY_PRE = '<!-- neko:personality:';
-const PERSONALITY_POST_START = ':start -->';
-const PERSONALITY_POST_END = ':end -->';
 
 function fail(code, msg) {
   console.error('ERROR ' + msg);
@@ -90,10 +83,16 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 
-// 剩余位置参数: [persona]
+// 剩余位置参数: [<ip>/<name>]
 const [persona] = argv;
 
-if (!persona) fail(1, '缺少人设名称参数');
+if (!persona) fail(1, '缺少人设名称参数（格式: <ip>/<name>，如 nekopara/chocola）');
+
+const personaSlash = persona.indexOf('/');
+if (personaSlash === -1) fail(1, `人设参数格式错误（应为 <ip>/<name>）: ${persona}`);
+const personaIp = persona.slice(0, personaSlash);
+const personaName = persona.slice(personaSlash + 1);
+if (!personaIp || !personaName) fail(1, `人设参数格式错误（IP 和名称均不能为空）: ${persona}`);
 
 const personalitySet = new Set(personalityArgs);
 
@@ -105,9 +104,9 @@ const readTrim = (f) => fs.readFileSync(f, 'utf8').replace(/^\s+|\s+$/g, '');
 // 读取身份档案
 let profile;
 try {
-  profile = readTrim(path.join(personasDir, persona + '.md'));
+  profile = readTrim(path.join(personasDir, personaIp, personaName + '.md'));
 } catch {
-  fail(1, `档案不存在: ${path.join(personasDir, persona + '.md')}`);
+  fail(1, `档案不存在: ${path.join(personasDir, personaIp, personaName + '.md')}`);
 }
 
 // 读取人格档案（按 personalitySet 中的顺序）
@@ -174,21 +173,16 @@ const lines = [
   '',
 ];
 
-if (scenarioContent && scenarioKey) {
-    lines.push(`${SCENARIO_PRE}${scenarioKey}${SCENARIO_POST_START}`);
-    lines.push(scenarioContent);
-    lines.push(`${SCENARIO_PRE}${scenarioKey}${SCENARIO_POST_END}`);
-    lines.push('');
+if (scenarioContent) {
+    lines.push(scenarioContent, '');
   }
 
   if (personalityList.length > 0) {
-  for (const { key, content } of personalityList) {
-    lines.push(`${PERSONALITY_PRE}${key}${PERSONALITY_POST_START}`);
-    lines.push(content);
-    lines.push(`${PERSONALITY_PRE}${key}${PERSONALITY_POST_END}`);
+    for (const { content } of personalityList) {
+      lines.push(content);
+    }
+    lines.push('');
   }
-  lines.push('');
-}
 
 lines.push(profile, '', END);
 const block = lines.join('\n');
