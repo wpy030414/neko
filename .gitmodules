@@ -1,3 +1,4 @@
 [submodule "jailbreaks"]
 	path = jailbreaks
-	url = git@github.com:rossi-nova/llm-jailbreaks.git
+	url = https://github.com/rossi-nova/llm-jailbreaks.git
+	branch = main
