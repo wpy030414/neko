@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const { createGallery } = require('../scripts/picker');
-const { buildCatalog } = require('../scripts/catalog');
+const { buildCatalog, listJailbreaks } = require('../scripts/catalog');
 
 function tempTarget() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-test-'));
@@ -50,12 +50,14 @@ test('catalog：扫描目录即可还原全部身份，无需手工表格', () =
   assert.ok(catalog.personalities.some((p) => p.id === 'horny' && p.name === '好色'));
   assert.ok(catalog.personalities.some((p) => p.id === 'yandere' && p.name === '病娇'));
   assert.equal(catalog.scenarios.length, 2);
-  assert.ok(catalog.jailbreaks.some((j) => j.id === 'jailbreaks/deepseek-4-1.md'));
-  assert.equal(catalog.defaultJailbreak, 'jailbreaks/deepseek-4-1.md');
-  // 越狱清单不收录 README 与空文件，其余文件一概保留
-  assert.ok(catalog.jailbreaks.every((j) => !/^jailbreaks\/readme(\.|$)/i.test(j.id)));
-  assert.ok(!catalog.jailbreaks.some((j) => j.id === 'jailbreaks/qwen-preferences.md'));
-  assert.ok(catalog.jailbreaks.some((j) => j.id === 'jailbreaks/grok-config.txt'));
+  assert.ok(catalog.jailbreaks.some((j) => j.id === 'jailbreaks/DeepSeek/deepseekv4.1 and v4.1-1017.md'));
+  assert.equal(catalog.defaultJailbreak, 'jailbreaks/DeepSeek/deepseekv4.1 and v4.1-1017.md');
+  // 越狱清单递归收录、按 provider 分组；不收 README 与空文件
+  assert.ok(catalog.jailbreaks.every((j) => !/(^|\/)readme(\.|$)/i.test(j.id)));
+  assert.ok(catalog.jailbreaks.every((j) => j.group === (j.provider || '其他')));
+  assert.ok(catalog.jailbreaks.some((j) => j.provider === 'DeepSeek' && j.group === 'DeepSeek'));
+  assert.ok(!catalog.jailbreaks.some((j) => j.id === 'jailbreaks/Alibaba/qwen-preferences.md'));
+  assert.ok(catalog.jailbreaks.some((j) => j.id === 'jailbreaks/xAI/grok-config.txt'));
 
   const all = catalog.groups.flatMap((g) => g.personas);
   const teio = all.find((p) => p.id === 'uma-musume/tokai-teio');
@@ -210,19 +212,39 @@ test('预填：已识别的人格/场景带进画廊，非法值静默丢弃', a
   }
 });
 
+test('越狱清单：递归扫描并按 provider 分组', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-jb-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'Provider A', 'nested'), { recursive: true });
+    fs.mkdirSync(path.join(dir, '.hidden'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Provider A', 'nested', 'alpha.md'), '# alpha\\n');
+    fs.writeFileSync(path.join(dir, 'Provider A', 'README.md'), '# ignored\\n');
+    fs.writeFileSync(path.join(dir, 'Provider A', 'empty.md'), '');
+    fs.writeFileSync(path.join(dir, '.hidden', 'secret.md'), '# ignored\\n');
+
+    const list = listJailbreaks(dir);
+    assert.deepEqual(list.map((j) => j.id), ['jailbreaks/Provider A/nested/alpha.md']);
+    assert.equal(list[0].name, 'nested/alpha');
+    assert.equal(list[0].provider, 'Provider A');
+    assert.equal(list[0].group, 'Provider A');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('启用好色时，引用块必须出现在人格区块之前', async () => {
   const { gallery, target } = await start();
   const res = await post(gallery, {
     persona: 'nekopara/chocola',
     personalities: ['horny', 'yandere'],
-    jb: 'jailbreaks/deepseek-4-1.md',
+    jb: 'jailbreaks/DeepSeek/deepseekv4.1 and v4.1-1017.md',
   });
   assert.equal(res.status, 200);
   const data = await res.json();
-  assert.match(data.output, /quote=jailbreaks\/deepseek-4-1\.md/);
+  assert.match(data.output, /quote=jailbreaks\/DeepSeek\/deepseekv4.1 and v4.1-1017\.md/);
 
   const doc = fs.readFileSync(target, 'utf8');
-  const quoteAt = doc.indexOf('> # Assistant Operating Specification');
+  const quoteAt = doc.indexOf('> # Operating Policy');
   const persAt = doc.indexOf('## 人格：好色');
   const yandereAt = doc.indexOf('## 人格：病娇');
   assert.ok(quoteAt > 0, '引用块应当存在');
@@ -236,7 +258,7 @@ test('未启用好色时不插入引用块', async () => {
   await post(gallery, { persona: 'nekopara/chocola', personalities: ['yandere'] });
   await gallery.done;
   const doc = fs.readFileSync(target, 'utf8');
-  assert.ok(!doc.includes('Assistant Operating Specification'));
+  assert.ok(!doc.includes('Operating Policy'));
   assert.ok(!doc.includes('quote='));
 });
 
@@ -253,12 +275,12 @@ test('越狱引用：jb 合法值透传 --jb，非法值被拒绝', async () => 
     const ok = await post(gallery, {
       persona: 'nekopara/chocola',
       personalities: ['horny'],
-      jb: 'jailbreaks/deepseek-4-1.md',
+      jb: 'jailbreaks/DeepSeek/deepseekv4.1 and v4.1-1017.md',
     });
     assert.equal(ok.status, 200);
-    assert.match((await ok.json()).output, /quote=jailbreaks\/deepseek-4-1\.md/);
+    assert.match((await ok.json()).output, /quote=jailbreaks\/DeepSeek\/deepseekv4.1 and v4.1-1017\.md/);
     const doc = fs.readFileSync(target, 'utf8');
-    assert.ok(doc.includes('> # Assistant Operating Specification'));
+    assert.ok(doc.includes('> # Operating Policy'));
   } finally {
     gallery.close();
   }
@@ -268,10 +290,10 @@ test('越狱总是可用：无人格也能引用；不启用即不传引用', as
   const a = await start();
   const any = await post(a.gallery, {
     persona: 'nekopara/chocola',
-    jb: 'jailbreaks/glm-5-3-flash.md',
+    jb: 'jailbreaks/Zhipu AI/glm-5-3-flash.md',
   });
   assert.equal(any.status, 200);
-  assert.match((await any.json()).output, /quote=jailbreaks\/glm-5-3-flash\.md/);
+  assert.match((await any.json()).output, /quote=jailbreaks\/Zhipu AI\/glm-5-3-flash\.md/);
   await a.gallery.done;
 
   const b = await start();
@@ -284,7 +306,7 @@ test('越狱总是可用：无人格也能引用；不启用即不传引用', as
     assert.equal(off.status, 200, '不启用即不传引用，即使启用好色也不报错');
     assert.doesNotMatch((await off.json()).output, /quote=/);
     const doc = fs.readFileSync(b.target, 'utf8');
-    assert.ok(!doc.includes('> # Assistant Operating Specification'));
+    assert.ok(!doc.includes('> # Operating Policy'));
   } finally {
     b.gallery.close();
   }
@@ -313,7 +335,7 @@ test('预览接口：与写入共用组装逻辑，不要求称呼、不落盘',
     assert.ok(rawBody.preview.includes('【称呼】'));
     assert.ok(rawBody.preview.includes('## 人格：好色'));
     assert.ok(rawBody.preview.includes('## 场景：口语化聊天'));
-    assert.ok(!rawBody.preview.includes('Assistant Operating Specification'), 'jb=off 不含引用');
+    assert.ok(!rawBody.preview.includes('Operating Policy'), 'jb=off 不含引用');
 
     // 填了称呼：占位符被替换
     const filled = await call('搭档');

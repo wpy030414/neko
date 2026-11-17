@@ -540,11 +540,20 @@
     off.value = 'off';
     off.textContent = '不启用';
     jbSel.appendChild(off);
+    const jbGroups = new Map();
     for (const j of list) {
+      const key = j.provider || '';
+      let group = jbGroups.get(key);
+      if (!group) {
+        group = document.createElement('optgroup');
+        group.label = j.group || '其他';
+        jbGroups.set(key, group);
+        jbSel.appendChild(group);
+      }
       const opt = document.createElement('option');
       opt.value = j.id;
       opt.textContent = j.name + (j.id === state.catalog.defaultJailbreak ? '（默认）' : '');
-      jbSel.appendChild(opt);
+      group.appendChild(opt);
     }
     jbSel.value = state.jb || state.catalog.defaultJailbreak || 'off';
     if (!state.jb) state.jb = jbSel.value;

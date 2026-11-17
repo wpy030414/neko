@@ -7,6 +7,7 @@
  *   personas/<ip>/<name>.*    → 同名立绘（png/webp/jpg）
  *   personalities/<name>.md   → 人格（首行 `## 人格：中文名`）
  *   scenarios/<name>.md       → 场景（首行 `## 场景：中文名`）
+ *   jailbreaks/<provider>/... → 越狱引用（递归扫描，按 provider 分组）
  *
  * 因此新增角色只需丢文件，不需要手工维护任何表格。
  *
@@ -59,7 +60,7 @@ const SCENARIO_BLURBS = {
 const ADDRESS_PLACEHOLDER = '【称呼】';
 
 // 「前置引用」的默认文件（与 switch.js 的 QUOTE_REQUIRED 保持一致）。
-const DEFAULT_JAILBREAK = 'jailbreaks/deepseek-4-1.md';
+const DEFAULT_JAILBREAK = 'jailbreaks/DeepSeek/deepseekv4.1 and v4.1-1017.md';
 
 /** README 之类不承载引用正文的说明文件，不应出现在越狱下拉里。 */
 function isReadmeName(name) {
@@ -76,23 +77,45 @@ function isEmptyFile(abs) {
 }
 
 /**
- * jailbreaks/ 子模块下的引用文件清单，越狱下拉的选项来源。
- * 排除隐藏文件、README 与空文件——它们在列表里只会被误选。
+ * 递归收集引用文件：jailbreaks/<provider>/<...>/<file>。
+ * 排除隐藏文件/目录、README 与空文件——它们在列表里只会被误选。
  */
-function listJailbreaks() {
+function collectJailbreakFiles(dir, rel = '') {
   let entries;
   try {
-    entries = fs.readdirSync(JAILBREAKS_DIR, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
   }
-  return entries
-    .filter((e) => e.isFile() && !e.name.startsWith('.'))
-    .filter((e) => !isReadmeName(e.name))
-    .filter((e) => !isEmptyFile(path.join(JAILBREAKS_DIR, e.name)))
-    .map((e) => e.name)
-    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
-    .map((f) => ({ id: 'jailbreaks/' + f, name: f.replace(/\.[^.]+$/, '') }));
+  const files = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const abs = path.join(dir, entry.name);
+    const relPath = rel ? rel + '/' + entry.name : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...collectJailbreakFiles(abs, relPath));
+    } else if (entry.isFile() && !isReadmeName(entry.name) && !isEmptyFile(abs)) {
+      files.push(relPath);
+    }
+  }
+  return files;
+}
+
+/** 越狱下拉的选项来源：递归路径 + provider 分组信息。 */
+function listJailbreaks(dir = JAILBREAKS_DIR) {
+  const files = collectJailbreakFiles(dir)
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  return files.map((rel) => {
+    const slash = rel.indexOf('/');
+    const provider = slash === -1 ? '' : rel.slice(0, slash);
+    const underProvider = slash === -1 ? rel : rel.slice(slash + 1);
+    return {
+      id: 'jailbreaks/' + rel,
+      name: underProvider.replace(/\.[^.]+$/, ''),
+      provider,
+      group: provider || '其他',
+    };
+  });
 }
 
 /** 首个标题形如 `## 人设：中文名（English）`；括号可能是全角或半角。 */
@@ -234,6 +257,7 @@ function summary(catalog) {
 
 module.exports = {
   buildCatalog,
+  listJailbreaks,
   summary,
   IP_LABELS,
   ADDRESS_PLACEHOLDER,

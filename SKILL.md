@@ -44,7 +44,8 @@ user-invocable: true
 
 - 「越狱」下拉总是可用：选定引用文件即无条件把其全文转成 markdown 引用块插在
   人格区块之前，选「不启用」则不传引用——是否插入完全由该下拉决定（贪欢不再
-  自动强制引用），默认选中 `deepseek-4-1.md`；文件缺失时切换直接失败
+  自动强制引用），引用按 provider 分组，默认选中 `DeepSeek/deepseekv4.1 and v4.1-1017.md`；
+  文件缺失时切换直接失败
   （`jailbreaks/` 是子模块，先 `git submodule update --init`）。
 - 没有浏览器或主人想在终端里看清单时：`node "<skill目录>/scripts/catalog.js" --summary`
   输出一行一个作品的紧凑摘要。
